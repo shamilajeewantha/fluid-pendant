@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Accelerometer Data</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        text-align: center;
+        margin-top: 30px;
+      }
+      .data {
+        font-size: 20px;
+        margin: 10px 0;
+      }
+      button {
+        padding: 10px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Accelerometer Data</h2>
+    <p class="data">X: <span id="x">Waiting...</span></p>
+    <p class="data">Y: <span id="y">Waiting...</span></p>
+    <p class="data">Z: <span id="z">Waiting...</span></p>
+
+    <h2>Rotation Data (Backup)</h2>
+    <p class="data">Alpha: <span id="alpha">Waiting...</span></p>
+    <p class="data">Beta: <span id="beta">Waiting...</span></p>
+    <p class="data">Gamma: <span id="gamma">Waiting...</span></p>
+
+    <h3>Status: <span id="status">Click the button to start</span></h3>
+    <button onclick="requestPermission()">Enable Sensor</button>
+
+    <script>
+      function requestPermission() {
+        if (typeof DeviceMotionEvent.requestPermission === "function") {
+          DeviceMotionEvent.requestPermission()
+            .then((permissionState) => {
+              if (permissionState === "granted") {
+                document.getElementById("status").textContent =
+                  "Permission granted! Listening for motion...";
+                startMotionTracking();
+              } else {
+                document.getElementById("status").textContent =
+                  "Permission denied!";
+              }
+            })
+            .catch((error) => {
+              document.getElementById("status").textContent = "Error: " + error;
+            });
+        } else {
+          document.getElementById("status").textContent =
+            "Listening for motion...";
+          startMotionTracking();
+        }
+      }
+
+      function startMotionTracking() {
+        window.addEventListener("devicemotion", (event) => {
+          let acc = event.acceleration || event.accelerationIncludingGravity;
+          let rotation = event.rotationRate;
+
+          // Check if accelerometer data is available
+          if (acc && (acc.x !== null || acc.y !== null || acc.z !== null)) {
+            document.getElementById("x").textContent = acc.x
+              ? acc.x.toFixed(2)
+              : "N/A";
+            document.getElementById("y").textContent = acc.y
+              ? acc.y.toFixed(2)
+              : "N/A";
+            document.getElementById("z").textContent = acc.z
+              ? acc.z.toFixed(2)
+              : "N/A";
+          } else {
+            document.getElementById("status").textContent =
+              "No accelerometer data available! Trying rotation...";
+          }
+
+          // Check if rotation data is available
+          if (rotation) {
+            document.getElementById("alpha").textContent = rotation.alpha
+              ? rotation.alpha.toFixed(2)
+              : "N/A";
+            document.getElementById("beta").textContent = rotation.beta
+              ? rotation.beta.toFixed(2)
+              : "N/A";
+            document.getElementById("gamma").textContent = rotation.gamma
+              ? rotation.gamma.toFixed(2)
+              : "N/A";
+          }
+        });
+      }
+    </script>
+  </body>
+</html>
