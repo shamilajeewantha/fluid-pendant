@@ -162,8 +162,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
         integrateParticles(dt, gravity) {
           for (var i = 0; i < this.numParticles; i++) {
-            this.particleVel[2 * i + 1] += dt * gravity;
-            this.particleVel[2 * i] += dt * gravity; // Apply gravity in X
+            this.particleVel[2 * i + 1] += dt * gravity.y;
+            this.particleVel[2 * i] += dt * gravity.x; // Apply gravity in X
 
             this.particlePos[2 * i] += this.particleVel[2 * i] * dt;
             this.particlePos[2 * i + 1] += this.particleVel[2 * i + 1] * dt;
@@ -743,8 +743,30 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
       // ----------------- end of simulator ------------------------------
 
+      if (window.DeviceMotionEvent) {
+        window.addEventListener(
+          "devicemotion",
+          (event) => {
+            const x = event.accelerationIncludingGravity.x;
+            const y = event.accelerationIncludingGravity.y;
+            const z = event.accelerationIncludingGravity.z;
+
+            handleMotionEvent(x, y, z);
+          },
+          true
+        );
+      }
+
+      const handleMotionEvent = (x, y, z) => {
+        // Apply gravity adjustments based on acceleration
+        scene.gravity.x = -x;
+        scene.gravity.y = -y;
+      };
+
       var scene = {
-        gravity: -9.81,
+        gravity: { x: 0, y: -9.81 },
+
+        // gravity: -9.81,
         //		gravity : 0.0,
         dt: 1.0 / 120.0,
         flipRatio: 0.9,
@@ -774,7 +796,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         scene.numPressureIters = 50;
         scene.numParticleIters = 2;
 
-        var res = 9;
+        var res = 16;
 
         var tankHeight = 1.0 * simHeight;
         var tankWidth = 1.0 * simWidth;
