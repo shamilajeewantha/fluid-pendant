@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fluid Simulation</title>
+    <style>
+      canvas {
+        display: block;
+        margin: 0 auto;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+
+    <script src="fluid_sim.js"></script>
+    <!-- Include the generated JS file -->
+
+    <script>
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      // Set canvas size
+      canvas.width = 800;
+      canvas.height = 600;
+
+      // Create WebAssembly Module after the JS file has loaded
+      createModule()
+        .then((Module) => {
+          // Once the module is loaded, access the functions
+          const update_simulation = Module._update_simulation;
+          const get_velocity = Module._get_velocity;
+
+          // Simulation loop
+          function render() {
+            // Call the update simulation function
+            update_simulation();
+
+            // Draw the velocity as a simple visualization (adjust as needed)
+            for (let i = 0; i < canvas.width; i++) {
+              for (let j = 0; j < canvas.height; j++) {
+                const velocity = get_velocity(i, j);
+                const colorValue = Math.min(255, Math.abs(velocity) * 255);
+                ctx.fillStyle = `rgb(${colorValue}, ${colorValue}, ${colorValue})`;
+                ctx.fillRect(i, j, 1, 1);
+              }
+            }
+
+            requestAnimationFrame(render); // Keep rendering
+          }
+
+          render(); // Start rendering the simulation
+        })
+        .catch((err) => {
+          console.error("Error loading WebAssembly module:", err);
+        });
+    </script>
+  </body>
+</html>
