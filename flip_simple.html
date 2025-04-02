@@ -43,6 +43,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         -webkit-transition: 0.2s;
         transition: opacity 0.2s;
       }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(8, 50px);
+        grid-template-rows: repeat(8, 50px);
+        gap: 2px;
+      }
+      .cell {
+        width: 50px;
+        height: 50px;
+        background-color: gray;
+        border: 1px solid black;
+      }
+      .blue {
+        background-color: blue !important;
+      }
     </style>
   </head>
 
@@ -52,8 +67,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       checked
       onclick="scene.showParticles = !scene.showParticles"
     />Particles &nbsp;
-    <input type="checkbox" onclick="scene.showGrid = !scene.showGrid" />Grid
-    &nbsp;
+    <input
+      type="checkbox"
+      checked
+      onclick="scene.showGrid = !scene.showGrid"
+    />Grid &nbsp;
     <input
       type="checkbox"
       checked
@@ -71,12 +89,33 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       value="9"
       class="slider"
       onchange="scene.flipRatio = 0.1 * this.value"
+    />FLIP
+    <label for="gravitySlider">Gravity Direction (-90° to 90°):</label>
+    <input
+      id="gravitySlider"
+      type="range"
+      min="-90"
+      max="90"
+      value="0"
+      class="slider"
+      oninput="updateGravity(this.value)"
     />
-    FLIP
+    <span id="gravityAngle">0°</span>
+
     <br />
     <canvas id="myCanvas" style="border: 2px solid"></canvas>
+    <p>Hopping Blue Cell</p>
+    <div class="grid" id="grid"></div>
 
     <script>
+      function updateGravity(angle) {
+        let radians = (angle * Math.PI) / 180; // Convert degrees to radians
+        scene.gravity.x = Math.sin(radians) * 9.81; // X component
+        scene.gravity.y = -Math.cos(radians) * 9.81; // Y component (negative to simulate downward gravity)
+
+        document.getElementById("gravityAngle").innerText = `${angle}°`;
+      }
+
       var canvas = document.getElementById("myCanvas");
       var gl = canvas.getContext("webgl");
       canvas.width = window.innerWidth - 20;
@@ -162,7 +201,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
         integrateParticles(dt, gravity) {
           for (var i = 0; i < this.numParticles; i++) {
-            this.particleVel[2 * i + 1] += dt * gravity;
+            this.particleVel[2 * i + 1] += dt * gravity.y;
+            this.particleVel[2 * i] += dt * gravity.x; // Apply gravity in X
+
             this.particlePos[2 * i] += this.particleVel[2 * i] * dt;
             this.particlePos[2 * i + 1] += this.particleVel[2 * i + 1] * dt;
           }
@@ -356,7 +397,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
             if (x1 < this.fNumX && y1 < this.fNumY) d[x1 * n + y1] += tx * ty;
             if (x0 < this.fNumX && y1 < this.fNumY) d[x0 * n + y1] += sx * ty;
           }
-
+          // This represents the expected (reference) density of the fluid. sets this value once at the beginning if it is not provided (== 0.0).
           if (this.particleRestDensity == 0.0) {
             var sum = 0.0;
             var numFluidCells = 0;
@@ -599,106 +640,18 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
           }
         }
 
-        updateParticleColors() {
-          // for (var i = 0; i < this.numParticles; i++) {
-          // 	this.particleColor[3 * i] *= 0.99;
-          // 	this.particleColor[3 * i + 1] *= 0.99
-          // 	this.particleColor[3 * i + 2] =
-          // 		clamp(this.particleColor[3 * i + 2] + 0.001, 0.0, 1.0)
-          // }
-
-          // return;
-
-          var h1 = this.fInvSpacing;
-
-          for (var i = 0; i < this.numParticles; i++) {
-            var s = 0.01;
-
-            this.particleColor[3 * i] = clamp(
-              this.particleColor[3 * i] - s,
-              0.0,
-              1.0
-            );
-            this.particleColor[3 * i + 1] = clamp(
-              this.particleColor[3 * i + 1] - s,
-              0.0,
-              1.0
-            );
-            this.particleColor[3 * i + 2] = clamp(
-              this.particleColor[3 * i + 2] + s,
-              0.0,
-              1.0
-            );
-
-            var x = this.particlePos[2 * i];
-            var y = this.particlePos[2 * i + 1];
-            var xi = clamp(Math.floor(x * h1), 1, this.fNumX - 1);
-            var yi = clamp(Math.floor(y * h1), 1, this.fNumY - 1);
-            var cellNr = xi * this.fNumY + yi;
-
-            var d0 = this.particleRestDensity;
-
-            if (d0 > 0.0) {
-              var relDensity = this.particleDensity[cellNr] / d0;
-              if (relDensity < 0.7) {
-                var s = 0.8;
-                this.particleColor[3 * i] = s;
-                this.particleColor[3 * i + 1] = s;
-                this.particleColor[3 * i + 2] = 1.0;
-              }
-            }
-          }
-        }
-
-        setSciColor(cellNr, val, minVal, maxVal) {
-          val = Math.min(Math.max(val, minVal), maxVal - 0.0001);
-          var d = maxVal - minVal;
-          val = d == 0.0 ? 0.5 : (val - minVal) / d;
-          var m = 0.25;
-          var num = Math.floor(val / m);
-          var s = (val - num * m) / m;
-          var r, g, b;
-
-          switch (num) {
-            case 0:
-              r = 0.0;
-              g = s;
-              b = 1.0;
-              break;
-            case 1:
-              r = 0.0;
-              g = 1.0;
-              b = 1.0 - s;
-              break;
-            case 2:
-              r = s;
-              g = 1.0;
-              b = 0.0;
-              break;
-            case 3:
-              r = 1.0;
-              g = 1.0 - s;
-              b = 0.0;
-              break;
-          }
-
-          this.cellColor[3 * cellNr] = r;
-          this.cellColor[3 * cellNr + 1] = g;
-          this.cellColor[3 * cellNr + 2] = b;
-        }
-
         updateCellColors() {
-          this.cellColor.fill(0.0);
+          this.cellColor.fill(0.0); // setting them to black
 
           for (var i = 0; i < this.fNumCells; i++) {
             if (this.cellType[i] == SOLID_CELL) {
-              this.cellColor[3 * i] = 0.5;
+              this.cellColor[3 * i] = 0.5; // gray ones
               this.cellColor[3 * i + 1] = 0.5;
               this.cellColor[3 * i + 2] = 0.5;
             } else if (this.cellType[i] == FLUID_CELL) {
-              var d = this.particleDensity[i];
-              if (this.particleRestDensity > 0.0) d /= this.particleRestDensity;
-              this.setSciColor(i, d, 0.0, 2.0);
+              this.cellColor[3 * i] = 0.0; // Red component
+              this.cellColor[3 * i + 1] = 1.0; // Green component
+              this.cellColor[3 * i + 2] = 0.0; // Blue component
             }
           }
         }
@@ -734,7 +687,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
             this.transferVelocities(false, flipRatio);
           }
 
-          this.updateParticleColors();
           this.updateCellColors();
         }
       }
@@ -742,7 +694,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       // ----------------- end of simulator ------------------------------
 
       var scene = {
-        gravity: -9.81,
+        gravity: { x: 0, y: -9.81 },
+
+        // gravity: -9.81,
         //		gravity : 0.0,
         dt: 1.0 / 120.0, // 1/120 = 0.0083 means the simulation runs at 120 FPS (frames per second)
         flipRatio: 0.9, // FLIP conserves vorticity better (more swirly motion), while PIC is more stable.
@@ -760,7 +714,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         obstacleVelX: 0.0, // Velocity of the obstacle (not moving initially). orange ball
         obstacleVelY: 0.0, // Velocity of the obstacle (not moving initially). orange ball
         showParticles: true,
-        showGrid: false,
+        showGrid: true,
         fluid: null, // Holds the FLIP fluid simulation object (set up later).
       };
 
@@ -973,7 +927,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         if (scene.showGrid) {
           var pointSize = ((0.9 * scene.fluid.h) / simWidth) * canvas.width;
 
-          gl.useProgram(pointShader);
+          gl.useProgram(pointShader); // starts using the compiled program above.
           gl.uniform2f(
             gl.getUniformLocation(pointShader, "domainSize"),
             simWidth,
@@ -990,12 +944,29 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
           gl.enableVertexAttribArray(posLoc);
           gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
-          gl.bindBuffer(gl.ARRAY_BUFFER, gridColorBuffer);
+          gl.bindBuffer(gl.ARRAY_BUFFER, gridColorBuffer); // sends data to GPU
           gl.bufferData(
             gl.ARRAY_BUFFER,
             scene.fluid.cellColor,
             gl.DYNAMIC_DRAW
           );
+
+          if (scene.fluid.cellColor && scene.fluid.cellColor.length === 300) {
+            updateGridColors(scene.fluid.cellColor);
+          } else {
+            console.error("Invalid cell color data");
+          }
+          // console.log(JSON.stringify(scene.fluid.cellColor, null, 2));
+          // it logs the color grid like this. 3 for each cell. for 100 cells, it will be 300 values
+          //  {
+          //   "0": 0.5,
+          //   "1": 0.5,
+          //   "2": 0.5,
+          //   "3": 0.5,
+          //   "4": 0.5,
+          //   "5": 0.5,
+          //   "6": 0.5,
+          //  }
 
           var colorLoc = gl.getAttribLocation(pointShader, "attrColor");
           gl.enableVertexAttribArray(colorLoc);
@@ -1279,6 +1250,36 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
       setupScene();
       update();
+
+      // Create the 8x8 grid dynamically
+      const gridContainer = document.getElementById("grid");
+      for (let i = 0; i < 64; i++) {
+        let cell = document.createElement("div");
+        cell.classList.add("cell");
+        gridContainer.appendChild(cell);
+      }
+      // Extract middle 64 cells from the 10×10 grid
+      function getMiddle64Colors(cellColor) {
+        let middleColors = [];
+        for (let col = 8; col >= 1; col--) {
+          for (let row = 1; row <= 8; row++) {
+            let cellIndex = (row * 10 + col) * 3; // Each cell has 3 values (RGB)
+            let r = cellColor[cellIndex] || 0;
+            let g = cellColor[cellIndex + 1] || 0;
+            let b = cellColor[cellIndex + 2] || 0;
+            middleColors.push(`rgb(${r * 255}, ${g * 255}, ${b * 255})`);
+          }
+        }
+        return middleColors;
+      }
+
+      // Function to update the grid colors
+      function updateGridColors(cellColor) {
+        const colors = getMiddle64Colors(cellColor);
+        document.querySelectorAll(".cell").forEach((cell, index) => {
+          cell.style.backgroundColor = colors[index];
+        });
+      }
     </script>
   </body>
 </html>
