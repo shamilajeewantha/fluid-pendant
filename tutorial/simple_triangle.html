@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebGL Simple Triangle</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="myCanvas"></canvas>
+
+    <script>
+      // Get the canvas and WebGL context
+      const canvas = document.getElementById("myCanvas");
+      const gl = canvas.getContext("webgl");
+
+      // Set the canvas size
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      // Vertex Shader: it defines how vertices are processed
+      const vertexShaderSource = `
+            attribute vec2 a_position;
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+            }
+        `;
+
+      // Fragment Shader: it defines how pixels are colored
+      const fragmentShaderSource = `
+            precision mediump float;
+            void main() {
+                gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); // Red color
+            }
+        `;
+
+      // Compile shaders
+      const vertexShader = compileShader(
+        gl,
+        gl.VERTEX_SHADER,
+        vertexShaderSource
+      );
+      const fragmentShader = compileShader(
+        gl,
+        gl.FRAGMENT_SHADER,
+        fragmentShaderSource
+      );
+
+      // Create shader program and link shaders
+      const shaderProgram = gl.createProgram();
+      gl.attachShader(shaderProgram, vertexShader);
+      gl.attachShader(shaderProgram, fragmentShader);
+      gl.linkProgram(shaderProgram);
+      gl.useProgram(shaderProgram);
+
+      // Define vertices for a triangle
+      const vertices = new Float32Array([
+        0.0,
+        0.5, // Top vertex
+        -0.5,
+        -0.5, // Bottom-left vertex
+        0.5,
+        -0.5, // Bottom-right vertex
+      ]);
+
+      // Create buffer and load data into it
+      const vertexBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+      // Get attribute location, point to the buffer
+      const a_position = gl.getAttribLocation(shaderProgram, "a_position");
+      gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(a_position);
+
+      // Clear the screen and set background color
+      gl.clearColor(0.9, 0.9, 0.9, 1.0); // Light grey background
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // Draw the triangle
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      // Helper function to compile shaders
+      function compileShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error("Error compiling shader:", gl.getShaderInfoLog(shader));
+          return null;
+        }
+        return shader;
+      }
+    </script>
+  </body>
+</html>

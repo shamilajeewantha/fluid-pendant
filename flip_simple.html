@@ -752,44 +752,35 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         overRelaxation: 1.9,
         compensateDrift: true,
         separateParticles: true,
-        obstacleX: 0.0,
-        obstacleY: 0.0,
-        obstacleRadius: 0.15,
+        obstacleX: 0.0, // Defines an obstacle in the fluid that orange ball
+        obstacleY: 0.0, // Defines an obstacle in the fluid that orange ball
+        obstacleRadius: 0.15, // Defines an obstacle in the fluid that orange ball
         paused: true,
-        showObstacle: true,
-        obstacleVelX: 0.0,
-        obstacleVelY: 0.0,
+        showObstacle: true, // Defines an obstacle in the fluid that orange ball
+        obstacleVelX: 0.0, // Velocity of the obstacle (not moving initially). orange ball
+        obstacleVelY: 0.0, // Velocity of the obstacle (not moving initially). orange ball
         showParticles: true,
         showGrid: false,
-        fluid: null,
+        fluid: null, // Holds the FLIP fluid simulation object (set up later).
       };
 
       function setupScene() {
-        scene.obstacleRadius = 0.15;
-        scene.overRelaxation = 1.9;
-
-        scene.dt = 1.0 / 60.0;
-        scene.numPressureIters = 50;
-        scene.numParticleIters = 2;
-
         // res = 16 means the tank is divided into 16 grid cells in height.
         var res = 9;
 
         var tankHeight = 1.0 * simHeight;
         var tankWidth = 1.0 * simHeight;
-        var h = tankHeight / res;
+        var h = tankHeight / res; // grid cell size
         var density = 1000.0;
 
         var relWaterHeight = 0.8;
         var relWaterWidth = 0.8;
 
-        // dam break
-
         // compute number of particles
 
-        var r = 0.3 * h; // particle radius w.r.t. cell size
-        var dx = 2.0 * r;
-        var dy = (Math.sqrt(3.0) / 2.0) * dx;
+        var r = 0.3 * h; // particle radius w.r.t. cell size. not diameter!!!
+        var dx = 2.0 * r; // Particle spacing in the x-direction (2 radii)
+        var dy = (Math.sqrt(3.0) / 2.0) * dx; // Particle spacing in the y-direction using hexagonal close-packing. equilateral triabgle. 60deg angle. 2r*sin60deg = (sqrt(3)/2)*2r
 
         var numX = Math.floor(
           (relWaterWidth * tankWidth - 2.0 * h - 2.0 * r) / dx
@@ -797,22 +788,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         var numY = Math.floor(
           (relWaterHeight * tankHeight - 2.0 * h - 2.0 * r) / dy
         );
-        var maxParticles = numX * numY;
+        var maxParticles = numX * numY; //  total number of particles.
 
         // create fluid
-
         f = scene.fluid = new FlipFluid(
           density,
           tankWidth,
           tankHeight,
           h,
           r,
-          maxParticles
+          maxParticles // used only in the constructor
         );
 
-        // create particles
+        f.numParticles = numX * numY; // used inside the important functions. not used much in the constructor of FlipFluid
 
-        f.numParticles = numX * numY;
+        // Loops through numX × numY, placing particles in a hexagonal grid.
         var p = 0;
         for (var i = 0; i < numX; i++) {
           for (var j = 0; j < numY; j++) {
@@ -822,9 +812,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         }
 
         // setup grid cells for tank
-
         var n = f.fNumY;
-
         for (var i = 0; i < f.fNumX; i++) {
           for (var j = 0; j < f.fNumY; j++) {
             var s = 1.0; // fluid
@@ -833,6 +821,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
           }
         }
 
+        // the orange ball
         setObstacle(3.0, 2.0, true);
       }
 
