@@ -1,11 +1,6 @@
-var U_FIELD = 0;
-var V_FIELD = 1;
-
 var FLUID_CELL = 0;
 var AIR_CELL = 1;
 var SOLID_CELL = 2;
-
-var cnt = 0;
 
 function clamp(x, min, max) {
   if (x < min) return min;
