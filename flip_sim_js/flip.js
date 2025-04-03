@@ -33,12 +33,7 @@ export class FlipFluid {
     // particles
 
     this.maxParticles = maxParticles;
-
     this.particlePos = new Float32Array(2 * this.maxParticles);
-    this.particleColor = new Float32Array(3 * this.maxParticles);
-    for (var i = 0; i < this.maxParticles; i++)
-      this.particleColor[3 * i + 2] = 1.0;
-
     this.particleVel = new Float32Array(2 * this.maxParticles);
     this.particleDensity = new Float32Array(this.fNumCells);
     this.particleRestDensity = 0.0;
@@ -67,7 +62,6 @@ export class FlipFluid {
   }
 
   pushParticlesApart(numIters) {
-    var colorDiffusionCoeff = 0.001;
 
     // count particles per cell
 
@@ -147,17 +141,6 @@ export class FlipFluid {
               this.particlePos[2 * id] += dx;
               this.particlePos[2 * id + 1] += dy;
 
-              // diffuse colors
-
-              for (var k = 0; k < 3; k++) {
-                var color0 = this.particleColor[3 * i + k];
-                var color1 = this.particleColor[3 * id + k];
-                var color = (color0 + color1) * 0.5;
-                this.particleColor[3 * i + k] =
-                  color0 + (color - color0) * colorDiffusionCoeff;
-                this.particleColor[3 * id + k] =
-                  color1 + (color - color1) * colorDiffusionCoeff;
-              }
             }
           }
         }
