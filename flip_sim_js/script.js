@@ -124,7 +124,7 @@ function setupScene() {
 }
 
 function draw() {
-  if (scene.fluid.cellColor && scene.fluid.cellColor.length === 300) {
+  if (scene.fluid.cellColor && scene.fluid.cellColor.length === 100) {
     updateGridColors(scene.fluid.cellColor);
   } else {
     console.error("Invalid cell color data");
@@ -147,11 +147,9 @@ function getMiddle64Colors(cellColor) {
   let middleColors = [];
   for (let col = 8; col >= 1; col--) {
     for (let row = 1; row <= 8; row++) {
-      let cellIndex = (row * 10 + col) * 3; // Each cell has 3 values (RGB)
-      let r = cellColor[cellIndex] || 0;
-      let g = cellColor[cellIndex + 1] || 0;
-      let b = cellColor[cellIndex + 2] || 0;
-      middleColors.push(`rgb(${r * 255}, ${g * 255}, ${b * 255})`);
+      let cellIndex = row * 10 + col; // Each cell has 3 values (RGB)
+      let g = cellColor[cellIndex] || 0;
+      middleColors.push(`rgb(0, ${g * 255}, 0)`);
     }
   }
   return middleColors;

@@ -33,7 +33,7 @@ export class FlipFluid {
     this.p = new Float32Array(this.fNumCells);
     this.s = new Float32Array(this.fNumCells);
     this.cellType = new Int32Array(this.fNumCells);
-    this.cellColor = new Float32Array(3 * this.fNumCells);
+    this.cellColor = new Int32Array(this.fNumCells);
 
     // particles
 
@@ -469,17 +469,11 @@ export class FlipFluid {
   }
 
   updateCellColors() {
-    this.cellColor.fill(0.0); // setting them to black
+    this.cellColor.fill(0); // setting them to black
 
     for (var i = 0; i < this.fNumCells; i++) {
-      if (this.cellType[i] == SOLID_CELL) {
-        this.cellColor[3 * i] = 0.5; // gray ones
-        this.cellColor[3 * i + 1] = 0.5;
-        this.cellColor[3 * i + 2] = 0.5;
-      } else if (this.cellType[i] == FLUID_CELL) {
-        this.cellColor[3 * i] = 0.0; // Red component
-        this.cellColor[3 * i + 1] = 1.0; // Green component
-        this.cellColor[3 * i + 2] = 0.0; // Blue component
+      if (this.cellType[i] == FLUID_CELL) {
+        this.cellColor[i] = 1; // Red component
       }
     }
   }
