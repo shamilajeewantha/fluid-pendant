@@ -148,54 +148,6 @@ export class FlipFluid {
     }
   }
 
-  handleParticleCollisions(obstacleX, obstacleY, obstacleRadius) {
-    var h = 1.0 / this.fInvSpacing;
-    var r = this.particleRadius;
-    var or = obstacleRadius;
-    var or2 = or * or;
-    var minDist = obstacleRadius + r;
-    var minDist2 = minDist * minDist;
-
-    var minX = h + r;
-    var maxX = (this.fNumX - 1) * h - r;
-    var minY = h + r;
-    var maxY = (this.fNumY - 1) * h - r;
-
-    for (var i = 0; i < this.numParticles; i++) {
-      var x = this.particlePos[2 * i];
-      var y = this.particlePos[2 * i + 1];
-
-      var dx = x - obstacleX;
-      var dy = y - obstacleY;
-      var d2 = dx * dx + dy * dy;
-
-      // obstacle collision
-      if (d2 < minDist2) {
-        this.particleVel[2 * i] = scene.obstacleVelX;
-        this.particleVel[2 * i + 1] = scene.obstacleVelY;
-      }
-
-      // wall collisions
-      if (x < minX) {
-        x = minX;
-        this.particleVel[2 * i] = 0.0;
-      }
-      if (x > maxX) {
-        x = maxX;
-        this.particleVel[2 * i] = 0.0;
-      }
-      if (y < minY) {
-        y = minY;
-        this.particleVel[2 * i + 1] = 0.0;
-      }
-      if (y > maxY) {
-        y = maxY;
-        this.particleVel[2 * i + 1] = 0.0;
-      }
-      this.particlePos[2 * i] = x;
-      this.particlePos[2 * i + 1] = y;
-    }
-  }
 
   updateParticleDensity() {
     var n = this.fNumY;
@@ -451,7 +403,7 @@ export class FlipFluid {
 
     for (var i = 0; i < this.fNumCells; i++) {
       if (this.cellType[i] == FLUID_CELL) {
-        this.cellColor[i] = 1; // Red component
+        this.cellColor[i] = 1; // Green component
       }
     }
   }
@@ -476,8 +428,7 @@ export class FlipFluid {
     for (var step = 0; step < numSubSteps; step++) {
       this.integrateParticles(sdt, gravity_x, gravity_y);
       if (separateParticles) this.pushParticlesApart(numParticleIters);
-      this.handleParticleCollisions(obstacleX, abstacleY, obstacleRadius);
-      this.transferVelocities(true);
+      this.transferVelocities(true, flipRatio);
       this.updateParticleDensity();
       this.solveIncompressibility(
         numPressureIters,
