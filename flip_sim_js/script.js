@@ -76,7 +76,7 @@ function setupScene() {
   var tankHeight = 1.0 * simHeight;
   var tankWidth = 1.0 * simHeight;
   var h = tankHeight / res; // grid cell size
-  var density = 1000.0;
+  var density = 10.0;
 
   var relWaterHeight = 0.8;
   var relWaterWidth = 0.8;
