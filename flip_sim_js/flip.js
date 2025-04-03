@@ -33,12 +33,7 @@ export class FlipFluid {
     // particles
 
     this.maxParticles = maxParticles;
-
     this.particlePos = new Float32Array(2 * this.maxParticles);
-    this.particleColor = new Float32Array(3 * this.maxParticles);
-    for (var i = 0; i < this.maxParticles; i++)
-      this.particleColor[3 * i + 2] = 1.0;
-
     this.particleVel = new Float32Array(2 * this.maxParticles);
     this.particleDensity = new Float32Array(this.fNumCells);
     this.particleRestDensity = 0.0;
@@ -56,10 +51,10 @@ export class FlipFluid {
     this.numParticles = 0;
   }
 
-  integrateParticles(dt, gravity) {
+  integrateParticles(dt, gravity_x, gravity_y) {
     for (var i = 0; i < this.numParticles; i++) {
-      this.particleVel[2 * i + 1] += dt * gravity.y;
-      this.particleVel[2 * i] += dt * gravity.x; // Apply gravity in X
+      this.particleVel[2 * i + 1] += dt * gravity_y;
+      this.particleVel[2 * i] += dt * gravity_x; // Apply gravity in X
 
       this.particlePos[2 * i] += this.particleVel[2 * i] * dt;
       this.particlePos[2 * i + 1] += this.particleVel[2 * i + 1] * dt;
@@ -67,7 +62,6 @@ export class FlipFluid {
   }
 
   pushParticlesApart(numIters) {
-    var colorDiffusionCoeff = 0.001;
 
     // count particles per cell
 
@@ -147,17 +141,6 @@ export class FlipFluid {
               this.particlePos[2 * id] += dx;
               this.particlePos[2 * id + 1] += dy;
 
-              // diffuse colors
-
-              for (var k = 0; k < 3; k++) {
-                var color0 = this.particleColor[3 * i + k];
-                var color1 = this.particleColor[3 * id + k];
-                var color = (color0 + color1) * 0.5;
-                this.particleColor[3 * i + k] =
-                  color0 + (color - color0) * colorDiffusionCoeff;
-                this.particleColor[3 * id + k] =
-                  color1 + (color - color1) * colorDiffusionCoeff;
-              }
             }
           }
         }
@@ -165,54 +148,6 @@ export class FlipFluid {
     }
   }
 
-  handleParticleCollisions(obstacleX, obstacleY, obstacleRadius) {
-    var h = 1.0 / this.fInvSpacing;
-    var r = this.particleRadius;
-    var or = obstacleRadius;
-    var or2 = or * or;
-    var minDist = obstacleRadius + r;
-    var minDist2 = minDist * minDist;
-
-    var minX = h + r;
-    var maxX = (this.fNumX - 1) * h - r;
-    var minY = h + r;
-    var maxY = (this.fNumY - 1) * h - r;
-
-    for (var i = 0; i < this.numParticles; i++) {
-      var x = this.particlePos[2 * i];
-      var y = this.particlePos[2 * i + 1];
-
-      var dx = x - obstacleX;
-      var dy = y - obstacleY;
-      var d2 = dx * dx + dy * dy;
-
-      // obstacle collision
-      if (d2 < minDist2) {
-        this.particleVel[2 * i] = scene.obstacleVelX;
-        this.particleVel[2 * i + 1] = scene.obstacleVelY;
-      }
-
-      // wall collisions
-      if (x < minX) {
-        x = minX;
-        this.particleVel[2 * i] = 0.0;
-      }
-      if (x > maxX) {
-        x = maxX;
-        this.particleVel[2 * i] = 0.0;
-      }
-      if (y < minY) {
-        y = minY;
-        this.particleVel[2 * i + 1] = 0.0;
-      }
-      if (y > maxY) {
-        y = maxY;
-        this.particleVel[2 * i + 1] = 0.0;
-      }
-      this.particlePos[2 * i] = x;
-      this.particlePos[2 * i + 1] = y;
-    }
-  }
 
   updateParticleDensity() {
     var n = this.fNumY;
@@ -468,14 +403,15 @@ export class FlipFluid {
 
     for (var i = 0; i < this.fNumCells; i++) {
       if (this.cellType[i] == FLUID_CELL) {
-        this.cellColor[i] = 1; // Red component
+        this.cellColor[i] = 1; // Green component
       }
     }
   }
 
   simulate(
     dt,
-    gravity,
+    gravity_x,
+    gravity_y,
     flipRatio,
     numPressureIters,
     numParticleIters,
@@ -490,10 +426,9 @@ export class FlipFluid {
     var sdt = dt / numSubSteps;
 
     for (var step = 0; step < numSubSteps; step++) {
-      this.integrateParticles(sdt, gravity);
+      this.integrateParticles(sdt, gravity_x, gravity_y);
       if (separateParticles) this.pushParticlesApart(numParticleIters);
-      this.handleParticleCollisions(obstacleX, abstacleY, obstacleRadius);
-      this.transferVelocities(true);
+      this.transferVelocities(true, flipRatio);
       this.updateParticleDensity();
       this.solveIncompressibility(
         numPressureIters,

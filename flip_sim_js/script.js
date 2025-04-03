@@ -6,8 +6,8 @@ import { FlipFluid } from "./flip.js";
 
 export function updateGravity(angle) {
   let radians = (angle * Math.PI) / 180; // Convert degrees to radians
-  scene.gravity.x = Math.sin(radians) * 9.81; // X component
-  scene.gravity.y = -Math.cos(radians) * 9.81; // Y component (negative to simulate downward gravity)
+  scene.gravity_x = Math.sin(radians) * 9.81; // X component
+  scene.gravity_y = -Math.cos(radians) * 9.81; // Y component (negative to simulate downward gravity)
 
   document.getElementById("gravityAngle").innerText = `${angle}°`;
 }
@@ -45,10 +45,8 @@ for (let i = 0; i < 64; i++) {
 var simHeight = 3.0;
 
 var scene = {
-  gravity: { x: 0, y: -9.81 },
-
-  // gravity: -9.81,
-  //		gravity : 0.0,
+  gravity_x: 0.0,
+  gravity_y: -9.81,
   dt: 1.0 / 120.0, // 1/120 = 0.0083 means the simulation runs at 120 FPS (frames per second)
   flipRatio: 0.9, // FLIP conserves vorticity better (more swirly motion), while PIC is more stable.
   numPressureIters: 100, // Number of iterations for the pressure solver (responsible for keeping water incompressible). Higher values reduce artifacts but increase computation time.
@@ -76,7 +74,7 @@ function setupScene() {
   var tankHeight = 1.0 * simHeight;
   var tankWidth = 1.0 * simHeight;
   var h = tankHeight / res; // grid cell size
-  var density = 1000.0;
+  var density = 10.0;
 
   var relWaterHeight = 0.8;
   var relWaterWidth = 0.8;
@@ -170,7 +168,8 @@ function simulate() {
   if (!scene.paused)
     scene.fluid.simulate(
       scene.dt,
-      scene.gravity,
+      scene.gravity_x,
+      scene.gravity_y,
       scene.flipRatio,
       scene.numPressureIters,
       scene.numParticleIters,
