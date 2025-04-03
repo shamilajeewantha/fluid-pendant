@@ -51,10 +51,10 @@ export class FlipFluid {
     this.numParticles = 0;
   }
 
-  integrateParticles(dt, gravity) {
+  integrateParticles(dt, gravity_x, gravity_y) {
     for (var i = 0; i < this.numParticles; i++) {
-      this.particleVel[2 * i + 1] += dt * gravity.y;
-      this.particleVel[2 * i] += dt * gravity.x; // Apply gravity in X
+      this.particleVel[2 * i + 1] += dt * gravity_y;
+      this.particleVel[2 * i] += dt * gravity_x; // Apply gravity in X
 
       this.particlePos[2 * i] += this.particleVel[2 * i] * dt;
       this.particlePos[2 * i + 1] += this.particleVel[2 * i + 1] * dt;
@@ -458,7 +458,8 @@ export class FlipFluid {
 
   simulate(
     dt,
-    gravity,
+    gravity_x,
+    gravity_y,
     flipRatio,
     numPressureIters,
     numParticleIters,
@@ -473,7 +474,7 @@ export class FlipFluid {
     var sdt = dt / numSubSteps;
 
     for (var step = 0; step < numSubSteps; step++) {
-      this.integrateParticles(sdt, gravity);
+      this.integrateParticles(sdt, gravity_x, gravity_y);
       if (separateParticles) this.pushParticlesApart(numParticleIters);
       this.handleParticleCollisions(obstacleX, abstacleY, obstacleRadius);
       this.transferVelocities(true);
