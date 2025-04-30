@@ -50,9 +50,8 @@ You can also control the simulation's gravity using your mobile device's acceler
 2.  **Access on Mobile:** Open a **browser other than Chrome** on your Android device and navigate to the HTTPS URL provided by Ngrok for port 8000 (e.g., `https://your-ngrok-url.ngrok-free.app/flip_mobile_accelerometer.html`). Chrome might have issues with accessing device sensors in this context, so try Firefox or another browser.
 
 3.  **Test Your Phone's Sensors:** If you're unsure whether your phone's sensors are working correctly, you can visit this helpful website in your mobile browser:
-    ```
     [https://sensor-js.xyz/demo.html](https://sensor-js.xyz/demo.html)
-    ```
+
     This will allow you to see the data being reported by your device's various sensors.
 
 Now you should be able to tilt and move your phone to influence the fluid simulation running in your mobile browser!
