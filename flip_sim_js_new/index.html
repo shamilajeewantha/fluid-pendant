@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <head>
+    <title>FLIP Fluid</title>
+    <style>
+      body {
+        font-family: verdana;
+        font-size: 15px;
+      }
+      .button {
+        background-color: #606060;
+        border: none;
+        color: white;
+        padding: 10px 10px;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+      }
+      .slider {
+        -webkit-appearance: none;
+        width: 80px;
+        height: 6px;
+        border-radius: 5px;
+        background: #d3d3d3;
+        outline: none;
+        opacity: 0.7;
+        -webkit-transition: 0.2s;
+        transition: opacity 0.2s;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(8, 50px);
+        grid-template-rows: repeat(8, 50px);
+        gap: 2px;
+      }
+      .cell {
+        width: 50px;
+        height: 50px;
+        background-color: gray;
+      }
+      .blue {
+        background-color: blue !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <input
+      type="checkbox"
+      checked
+      onclick="scene.showParticles = !scene.showParticles"
+    />Particles &nbsp;
+    <input
+      type="checkbox"
+      checked
+      onclick="scene.showGrid = !scene.showGrid"
+    />Grid &nbsp;
+    <input
+      type="checkbox"
+      checked
+      onclick="scene.compensateDrift = !scene.compensateDrift"
+    />Compensate Drift &nbsp;
+    <input
+      type="checkbox"
+      checked
+      onclick="scene.separateParticles = !scene.separateParticles"
+    />Separate Particles &nbsp; PIC
+    <input
+      type="range"
+      min="0"
+      max="10"
+      value="9"
+      class="slider"
+      onchange="scene.flipRatio = 0.1 * this.value"
+    />FLIP
+    <label for="gravitySlider">Gravity Direction (-90° to 90°):</label>
+    <input
+      id="gravitySlider"
+      type="range"
+      min="-90"
+      max="90"
+      value="0"
+      class="slider"
+      oninput="updateGravity(this.value)"
+    />
+    <span id="gravityAngle">0°</span>
+
+    <br />
+    <p>Hopping Blue Cell</p>
+    <div class="grid" id="grid"></div>
+
+    <script src="flip.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
