@@ -64,7 +64,7 @@ var scene = {
   obstacleVelY: 0.0, // Velocity of the obstacle (not moving initially). orange ball
   showParticles: true,
   showGrid: true,
-  fluid: null, // Holds the FLIP fluid simulation object (set up later).
+  fluid: FlipFluid, // Holds the FLIP fluid simulation object (set up later).
 };
 
 function setupScene() {
@@ -191,4 +191,4 @@ function update() {
 
 // Run the simulation at 60 FPS
 setupScene();
-setInterval(update, 1000 / 60);
+setInterval(update, 1000 / 120);

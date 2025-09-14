@@ -6,7 +6,7 @@
 #include "flip_fluid.h"
 
 // Setup a scene with FlipFluid
-void setupScene(Scene *scene, float simWidth, float simHeight) {
+void setupScene(Scene *scene) {
     if (!scene) return;
 
     int res = 9;

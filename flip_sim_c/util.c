@@ -63,7 +63,7 @@ void InitFlip(){ // Declaration of InitFlip function
     /* 2. GET attributes (reading values) */
     printf("Gravity: (%.2f, %.2f)\n", scene.gravity_x, scene.gravity_y);
 
-    setupScene(&scene, 1.0f, 1.0f);
+    setupScene(&scene);
 
     printf("First particle position: (%f, %f)\n",
            scene.fluid->particlePos[0],

@@ -178,13 +178,9 @@ class FlipFluid {
     }
   }
 
-  handleParticleCollisions(obstacleX, obstacleY, obstacleRadius) {
+  handleParticleCollisions() {
     var h = 1.0 / this.fInvSpacing;
     var r = this.particleRadius;
-    var or = obstacleRadius;
-    var or2 = or * or;
-    var minDist = obstacleRadius + r;
-    var minDist2 = minDist * minDist;
 
     var minX = h + r;
     var maxX = (this.fNumX - 1) * h - r;
@@ -194,16 +190,6 @@ class FlipFluid {
     for (var i = 0; i < this.numParticles; i++) {
       var x = this.particlePos[2 * i];
       var y = this.particlePos[2 * i + 1];
-
-      var dx = x - obstacleX;
-      var dy = y - obstacleY;
-      var d2 = dx * dx + dy * dy;
-
-      // obstacle collision
-      if (d2 < minDist2) {
-        this.particleVel[2 * i] = scene.obstacleVelX;
-        this.particleVel[2 * i + 1] = scene.obstacleVelY;
-      }
 
       // wall collisions
       if (x < minX) {
@@ -520,7 +506,7 @@ class FlipFluid {
     for (var step = 0; step < numSubSteps; step++) {
       this.integrateParticles(sdt, gravity);
       if (separateParticles) this.pushParticlesApart(numParticleIters);
-      this.handleParticleCollisions(obstacleX, abstacleY, obstacleRadius);
+      this.handleParticleCollisions();
       this.transferVelocities(true);
       this.updateParticleDensity();
       this.solveIncompressibility(
