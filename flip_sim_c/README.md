@@ -1,2 +1,3 @@
-gcc flip.c -o flip
-./flip.exe
+make
+
+./main.exe

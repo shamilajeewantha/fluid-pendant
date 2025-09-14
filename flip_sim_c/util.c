@@ -2,11 +2,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <commctrl.h>
+#include "scene.h"
+#include "flip_utils.h"
 
 // Global Variables
 int grid[SIZE][SIZE] = {0};
 HWND hwndTrackbar, hwndStatic, hwndStartButton, hwndPauseButton, hwndStateTextbox;
-BOOL isRunning = FALSE;
+Scene scene;
 
 // Function to randomize the grid
 void RandomizeGrid() {
@@ -30,8 +32,20 @@ void DrawGrid(HDC hdc) {
 }
 
 // Function to update the state textbox
-void UpdateStateTextbox(HWND hwnd) {
-    SetWindowText(hwndStateTextbox, isRunning ? "Running" : "Paused"); //  This function updates the state of a textbox (hwndStateTextbox) to display whether the simulation is running or paused.
+void UpdateStateTextbox() {
+    SetWindowText(hwndStateTextbox, scene.paused ? "Paused" : "Running"); //  This function updates the state of a textbox (hwndStateTextbox) to display whether the simulation is running or paused.
+}
+
+void StartSimulation(HWND hwnd) {
+    scene.paused = FALSE;
+    UpdateStateTextbox();
+    printf("Simulation Started\n");
+}
+
+void PauseSimulation(HWND hwnd) {
+    scene.paused = TRUE;
+    UpdateStateTextbox();
+    printf("Simulation Paused\n");
 }
 
 // Function to update the trackbar value display
@@ -41,6 +55,22 @@ void UpdateTrackbarValue() {
     sprintf(buffer, "Trackbar Value: %d", value); // This formats the trackbar value into a string ("Trackbar Value: X" where X is the value from the trackbar).
     SetWindowText(hwndStatic, buffer);  // Sets the text of the static control (hwndStatic) to display the current trackbar value.
 }
+
+
+void InitFlip(){ // Declaration of InitFlip function
+    scene = scene_default(); // Initialize global scene
+
+    /* 2. GET attributes (reading values) */
+    printf("Gravity: (%.2f, %.2f)\n", scene.gravity_x, scene.gravity_y);
+
+    setupScene(&scene, 1.0f, 1.0f);
+
+    printf("First particle position: (%f, %f)\n",
+           scene.fluid->particlePos[0],
+           scene.fluid->particlePos[1]);
+
+}
+
 
 // Function to initialize UI elements
 // This function initializes the user interface by creating various controls, such as static text, buttons, and a trackbar (slider).
@@ -71,4 +101,12 @@ void InitUI(HWND hwnd) {
 
     hwndStateTextbox = CreateWindow("EDIT", "Not Started", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY,
                                     400, SIZE * CELL_SIZE + 100, 100, 30, hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+
+    printf("UI Initialized\n");
+    printf("Initializing flip....");
+    InitFlip();
+    printf("Flip Initialized.\n");
+
+
 }

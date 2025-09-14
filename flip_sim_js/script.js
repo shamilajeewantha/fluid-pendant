@@ -145,7 +145,7 @@ function getMiddle64Colors(cellColor) {
   let middleColors = [];
   for (let col = 8; col >= 1; col--) {
     for (let row = 1; row <= 8; row++) {
-      let cellIndex = row * 10 + col; // Each cell has 3 values (RGB)
+      let cellIndex = row * 10 + col; 
       let g = cellColor[cellIndex] || 0;
       middleColors.push(`rgb(0, ${g * 255}, 0)`);
     }

@@ -6,17 +6,19 @@
 
 #include <windows.h>
 #include <commctrl.h>  // Ensure this is included for trackbar support
+#include "scene.h"
 
 #define SIZE 8
 #define CELL_SIZE 50
 
 extern int grid[SIZE][SIZE];
 extern HWND hwndTrackbar, hwndStatic, hwndStartButton, hwndPauseButton, hwndStateTextbox;
-extern BOOL isRunning;
+extern Scene scene;
 
 void RandomizeGrid();
 void DrawGrid(HDC hdc);
-void UpdateStateTextbox(HWND hwnd);
+void StartSimulation(HWND hwnd);
+void PauseSimulation(HWND hwnd);
 void InitUI(HWND hwnd);
 void UpdateTrackbarValue();
 
