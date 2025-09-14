@@ -14,13 +14,7 @@ Scene scene_default(void)
     s.overRelaxation    = 1.9f;
     s.compensateDrift   = true;
     s.separateParticles = true;
-    s.obstacleX         = 0.0f;
-    s.obstacleY         = 0.0f;
-    s.obstacleRadius    = 0.15f;
     s.paused            = true;
-    s.showObstacle      = true;
-    s.obstacleVelX      = 0.0f;
-    s.obstacleVelY      = 0.0f;
     s.showParticles     = true;
     s.showGrid          = true;
     s.fluid             = NULL;

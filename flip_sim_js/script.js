@@ -55,13 +55,7 @@ var scene = {
   overRelaxation: 1.9,
   compensateDrift: true,
   separateParticles: true,
-  obstacleX: 0.0, // Defines an obstacle in the fluid that orange ball
-  obstacleY: 0.0, // Defines an obstacle in the fluid that orange ball
-  obstacleRadius: 0.15, // Defines an obstacle in the fluid that orange ball
   paused: true,
-  showObstacle: true, // Defines an obstacle in the fluid that orange ball
-  obstacleVelX: 0.0, // Velocity of the obstacle (not moving initially). orange ball
-  obstacleVelY: 0.0, // Velocity of the obstacle (not moving initially). orange ball
   showParticles: true,
   showGrid: true,
   fluid: FlipFluid, // Holds the FLIP fluid simulation object (set up later).
@@ -176,9 +170,6 @@ function simulate() {
       scene.overRelaxation,
       scene.compensateDrift,
       scene.separateParticles,
-      scene.obstacleX,
-      scene.obstacleY,
-      scene.obstacleRadius,
       scene.colorFieldNr
     );
   scene.frameNr++;

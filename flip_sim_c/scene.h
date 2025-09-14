@@ -18,13 +18,7 @@ typedef struct Scene
     float overRelaxation;   // Over-relaxation factor for solver
     bool  compensateDrift;  // Whether to compensate drift
     bool  separateParticles;// Whether to separate overlapping particles
-    float obstacleX;        // Obstacle X position
-    float obstacleY;        // Obstacle Y position
-    float obstacleRadius;   // Obstacle radius
     bool  paused;           // Pause flag
-    bool  showObstacle;     // Show obstacle flag
-    float obstacleVelX;     // Obstacle velocity in X
-    float obstacleVelY;     // Obstacle velocity in Y
     bool  showParticles;    // Show particles flag
     bool  showGrid;         // Show grid flag
     FlipFluid  *fluid;            // Pointer to fluid simulation object (placeholder)

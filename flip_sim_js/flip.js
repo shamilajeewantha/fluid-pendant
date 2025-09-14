@@ -452,10 +452,7 @@ export class FlipFluid {
     numParticleIters,
     overRelaxation,
     compensateDrift,
-    separateParticles,
-    obstacleX,
-    abstacleY,
-    obstacleRadius
+    separateParticles
   ) {
     var numSubSteps = 1;
     var sdt = dt / numSubSteps;
