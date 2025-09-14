@@ -21,6 +21,7 @@ void StartSimulation(HWND hwnd);
 void PauseSimulation(HWND hwnd);
 void InitUI(HWND hwnd);
 void UpdateTrackbarValue();
+void SimulateFluid(Scene* scene);
 
 #endif
 // This is the end of the inclusion guard. The #endif marks the end of the #ifndef UTIL_H block, ensuring that the contents of the header file are only included once in any source file that includes util.h.

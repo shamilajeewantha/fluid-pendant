@@ -4,6 +4,10 @@
 #include <commctrl.h>
 #include "scene.h"
 #include "flip_utils.h"
+#include "flip_fluid.h"
+#include <math.h>
+
+#define DEG2RAD(angle) ((angle) * M_PI / 180.0)
 
 // Global Variables
 int grid[SIZE][SIZE] = {0};
@@ -18,6 +22,45 @@ void RandomizeGrid() {
         }
     }
 }
+
+
+void UpdateGridFromFluid(Scene* scene) {
+    if (!scene->fluid || !scene->fluid->cellColor) return;
+
+    int p = 0;
+    for (int col = 1; col <= 8; col++) {
+        for (int row = 1; row <= 8; row++) {
+            int cellIndex = row * 10 + col;
+            float g = scene->fluid->cellColor[cellIndex];
+            // map to 0 or 1 for grid
+            grid[row-1][col-1] = (g > 0.01f) ? 1 : 0;  
+        }
+    }
+}
+
+
+void SimulateFluid(Scene* scene) {
+    if (!scene->paused && scene->fluid) {
+        simulateFlipFluid(
+            scene->fluid,
+            scene->dt,
+            scene->gravity_x,
+            scene->gravity_y,
+            scene->flipRatio,
+            scene->numPressureIters,
+            scene->numParticleIters,
+            scene->overRelaxation,
+            scene->compensateDrift,
+            scene->separateParticles
+        );
+        scene->frameNr++;
+
+        UpdateGridFromFluid(scene);  // Update grid based on fluid colors
+    }
+}
+
+
+
 
 // Function to draw the grid
 void DrawGrid(HDC hdc) {
@@ -50,10 +93,17 @@ void PauseSimulation(HWND hwnd) {
 
 // Function to update the trackbar value display
 void UpdateTrackbarValue() {
-    int value = SendMessage(hwndTrackbar, TBM_GETPOS, 0, 0); // Sends a message to the trackbar to get its current position.
+    int angle = SendMessage(hwndTrackbar, TBM_GETPOS, 0, 0); // Get trackbar position (-90 to 90)
     char buffer[50];
-    sprintf(buffer, "Trackbar Value: %d", value); // This formats the trackbar value into a string ("Trackbar Value: X" where X is the value from the trackbar).
-    SetWindowText(hwndStatic, buffer);  // Sets the text of the static control (hwndStatic) to display the current trackbar value.
+    sprintf(buffer, "Angle: %d°", angle);
+    SetWindowText(hwndStatic, buffer);
+
+    // Convert angle to radians and update scene gravity
+    double radians = DEG2RAD(angle);
+    scene.gravity_x = sin(radians) * 9.81;
+    scene.gravity_y = -cos(radians) * 9.81;
+
+    printf("Gravity updated: (%.2f, %.2f)\n", scene.gravity_x, scene.gravity_y);
 }
 
 

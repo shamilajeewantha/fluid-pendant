@@ -4,6 +4,6 @@
 #include "scene.h"
 
 // Setup a generic scene; takes a Scene pointer as argument
-void setupScene(Scene *s, float simWidth, float simHeight);
+void setupScene(Scene *scene);
 
 #endif

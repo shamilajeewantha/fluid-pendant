@@ -8,10 +8,10 @@
 // Setup a scene with FlipFluid
 void setupScene(Scene *scene) {
     if (!scene) return;
-
     int res = 9;
-    float tankHeight = simHeight;
-    float tankWidth  = simHeight;
+    float simHeight = 3.0f;
+    float tankHeight = 1.0f * simHeight;
+    float tankWidth  = 1.0f * simHeight;
     float h = tankHeight / res;
     float density = 10.0f;
 
@@ -40,6 +40,7 @@ void setupScene(Scene *scene) {
 
     f->particlePos = (float*)malloc(sizeof(float) * maxParticles * 2);
     f->s = (float*)malloc(sizeof(float) * numX * numY);
+    f->cellColor = (float*)malloc(sizeof(float) * 10 * 10); // 10x10 grid for cellColor
 
     // Place particles in hexagonal grid
     int p = 0;

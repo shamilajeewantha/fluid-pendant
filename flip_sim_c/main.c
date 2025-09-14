@@ -33,7 +33,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_TIMER:
             if (!scene.paused) { // isRunning is a global variable defined in util.h
-                RandomizeGrid();  // From utils.c. Update grid
+                // RandomizeGrid();  // From utils.c. Update grid
+                SimulateFluid(&scene);  // From utils.c. Update grid
                 InvalidateRect(hwnd, NULL, TRUE);  // Force redraw
             }
             break;
