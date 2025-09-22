@@ -27,13 +27,27 @@ void RandomizeGrid() {
 void UpdateGridFromFluid(Scene* scene) {
     if (!scene->fluid || !scene->fluid->cellColor) return;
 
-    int p = 0;
+    // Clear grid first
+    for (int i = 0; i < SIZE; i++) for (int j = 0; j < SIZE; j++) grid[i][j] = 0;
+
+    // Replicate JS getMiddle64Colors ordering exactly
+    // Extract inner 8x8 from a 10x10 laid out in ROW-MAJOR (index = row*10 + col)
+    int colors[64];
+    int k = 0;
     for (int col = 1; col <= 8; col++) {
         for (int row = 1; row <= 8; row++) {
             int cellIndex = row * 10 + col;
             float g = scene->fluid->cellColor[cellIndex];
-            // map to 0 or 1 for grid
-            grid[row-1][col-1] = (g > 0.01f) ? 1 : 0;  
+            colors[k++] = (g > 0.01f) ? 1 : 0;
+        }
+    }
+
+    // Apply to the 8x8 grid in row-major DOM order
+    // Rotate 90° and flip vertically so up maps to top of display
+    k = 0;
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            grid[7 - j][i] = colors[k++];
         }
     }
 }
@@ -98,10 +112,11 @@ void UpdateTrackbarValue() {
     sprintf(buffer, "Angle: %d°", angle);
     SetWindowText(hwndStatic, buffer);
 
-    // Convert angle to radians and update scene gravity
+    // Convert angle to radians and update scene gravity.
+    // Angle 0 => gravity down (negative Y). Positive angle tilts clockwise.
     double radians = DEG2RAD(angle);
-    scene.gravity_x = sin(radians) * 9.81;
-    scene.gravity_y = -cos(radians) * 9.81;
+    scene.gravity_x =  sin(radians) * 9.81;  // right is positive X
+    scene.gravity_y = -cos(radians) * 9.81;  // up is positive Y (so down is negative)
 
     printf("Gravity updated: (%.2f, %.2f)\n", scene.gravity_x, scene.gravity_y);
 }

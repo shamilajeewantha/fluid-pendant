@@ -30,8 +30,9 @@ void setupScene(Scene *scene) {
     FlipFluid *f = (FlipFluid*)malloc(sizeof(FlipFluid));
     f->numParticles = maxParticles;
     f->maxParticles = maxParticles;
-    f->fNumX = numX;
-    f->fNumY = numY;
+    // Grid resolution should be based on tank size and cell size h (like JS)
+    f->fNumX = (int)floorf(tankWidth  / h) + 1;
+    f->fNumY = (int)floorf(tankHeight / h) + 1;
     f->density = density;
     f->tankWidth = tankWidth;
     f->tankHeight = tankHeight;
@@ -39,10 +40,10 @@ void setupScene(Scene *scene) {
     f->r = r;
 
     f->particlePos = (float*)malloc(sizeof(float) * maxParticles * 2);
-    f->s = (float*)malloc(sizeof(float) * numX * numY);
+    f->s = (float*)malloc(sizeof(float) * f->fNumX * f->fNumY);
     f->cellColor = (float*)malloc(sizeof(float) * 10 * 10); // 10x10 grid for cellColor
 
-    // Place particles in hexagonal grid
+    // Place particles in hexagonal grid (fits within tank using numX/numY)
     int p = 0;
     for (int i = 0; i < numX; i++) {
         for (int j = 0; j < numY; j++) {
@@ -56,6 +57,7 @@ void setupScene(Scene *scene) {
     for (int i = 0; i < f->fNumX; i++) {
         for (int j = 0; j < f->fNumY; j++) {
             float s = 1.0f;
+            // Walls on left, bottom, right. Top remains fluid – matches JS tank setup
             if (i == 0 || i == f->fNumX - 1 || j == 0) s = 0.0f;
             f->s[i * n + j] = s;
         }
