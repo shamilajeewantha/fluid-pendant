@@ -33,6 +33,22 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+// ADXL SPI Commands
+#define ADXL_READ_CMD 0x0B
+#define ADXL_WRITE_CMD 0x0A
+
+// ADXL SPI registers
+#define ADXL_DEVID_AD_REG 0x00
+#define ADXL_STATUS_REG 0x0B
+#define ADXL362_POWER_CTL_REG 0x2D
+// ADXL362 Data registers
+#define ADXL_XDATA_REG 0x08
+#define ADXL_YDATA_REG 0x09
+#define ADXL_ZDATA_REG 0x0A
+
+// ADXL SPI register options
+#define ADXL362_MEASURE 0x02
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,8 +63,6 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 uint32_t counter = 0;  // global counter
-uint8_t txData[3];
-uint8_t rxData[3];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,64 +82,70 @@ int _write(int file, char *ptr, int len)
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void ADXL362_ReadID(void)
+uint8_t ADXL362_ReadRegister(uint8_t reg_addr)
 {
-    uint8_t devid;
+    uint8_t tx[3], rx[3];
+    uint8_t value;
 
     // CS LOW
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
 
-    // Send read command: 0x0B = Read Register
-    txData[0] = 0x0B;  // Read command
-    txData[1] = 0x00;  // DEVID_AD register address (0x00)
-    txData[2] = 0x00;  // Dummy byte to receive data
+    // Prepare SPI command
+    tx[0] = ADXL_READ_CMD;      // Read command
+    tx[1] = reg_addr;  // Register address
+    tx[2] = 0x00;      // Dummy byte to receive data
 
-    HAL_SPI_TransmitReceive(&hspi1, txData, rxData, 3, HAL_MAX_DELAY);
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 3, HAL_MAX_DELAY);
 
     // CS HIGH
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
 
-    // Print transmitted bytes in **one line**
-    printf("TX Data (device id): 0x%02X 0x%02X 0x%02X\r\n", txData[0], txData[1], txData[2]);
+    value = rx[2];  // The third byte contains the register value
 
-    // Print received bytes in **three lines**
-    printf("RX Data[0]: 0x%02X\r\n", rxData[0]);
-    printf("RX Data[1]: 0x%02X\r\n", rxData[1]);
-    printf("RX Data[2]: 0x%02X\r\n", rxData[2]);
+    // Print TX and RX for debugging
+//    printf("TX Data: 0x%02X 0x%02X 0x%02X\r\n", tx[0], tx[1], tx[2]);
+//    printf("RX Data[0]: 0x%02X\r\nRX Data[1]: 0x%02X\r\nRX Data[2]: 0x%02X\r\n", rx[0], rx[1], rx[2]);
 
-    devid = rxData[2]; // Third byte is the device ID
-    printf("ADXL362 Device ID: 0x%02X\r\n", devid);
+    return value;
+}
+void ADXL362_WriteRegister(uint8_t reg_addr, uint8_t value)
+{
+    uint8_t tx[3];
+
+    // CS LOW
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
+
+    // Prepare SPI write command
+    tx[0] = ADXL_WRITE_CMD;  // 0x0A
+    tx[1] = reg_addr;        // register address
+    tx[2] = value;           // value to write
+
+    HAL_SPI_Transmit(&hspi1, tx, 3, HAL_MAX_DELAY);
+
+    // CS HIGH
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
+
+    // Debug print
+    printf("Write Reg 0x%02X = 0x%02X\r\n", reg_addr, value);
+    printf("TX Data: 0x%02X 0x%02X 0x%02X\r\n", tx[0], tx[1], tx[2]);
 }
 
 
+/**
+ * @brief  Read Device ID
+ */
+void ADXL362_ReadID(void)
+{
+    uint8_t devid = ADXL362_ReadRegister(ADXL_DEVID_AD_REG);
+    printf("ADXL362 Device ID: 0x%02X\r\n", devid);
+}
+
+/**
+ * @brief  Read STATUS register and print human-readable bits
+ */
 void ADXL362_ReadStatus(void)
 {
-    uint8_t status;
-
-    // CS LOW
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
-
-    // Read STATUS register (0x0B)
-    txData[0] = 0x0B;  // Read command
-    txData[1] = 0x0B;  // STATUS register address
-    txData[2] = 0x00;  // Dummy byte
-
-    HAL_SPI_TransmitReceive(&hspi1, txData, rxData, 3, HAL_MAX_DELAY);
-
-    // CS HIGH
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
-
-    status = rxData[2];
-
-    // Print TX bytes
-    printf("TX Data (Status): 0x%02X 0x%02X 0x%02X\r\n", txData[0], txData[1], txData[2]);
-
-    // Print RX bytes
-    printf("RX Data[0]: 0x%02X\r\n", rxData[0]);
-    printf("RX Data[1]: 0x%02X\r\n", rxData[1]);
-    printf("RX Data[2]: 0x%02X\r\n", rxData[2]);
-
-    // Print STATUS in human-readable format
+    uint8_t status = ADXL362_ReadRegister(ADXL_STATUS_REG);
     printf("ADXL362 STATUS: 0x%02X\r\n", status);
     printf("  ERROR        : %s\r\n", (status & 0x80) ? "1" : "0");
     printf("  READY        : %s\r\n", (status & 0x40) ? "1" : "0");
@@ -136,6 +156,16 @@ void ADXL362_ReadStatus(void)
     printf("  FIFO_READY   : %s\r\n", (status & 0x02) ? "1" : "0");
     printf("  RESERVED     : %s\r\n", (status & 0x01) ? "1" : "0");
 }
+
+void ADXL362_ReadXYZ(void)
+{
+    uint8_t x = ADXL362_ReadRegister(ADXL_XDATA_REG);
+    uint8_t y = ADXL362_ReadRegister(ADXL_YDATA_REG);
+    uint8_t z = ADXL362_ReadRegister(ADXL_ZDATA_REG);
+
+    printf("X: %d\tY: %d\tZ: %d\r\n", x, y, z);
+}
+
 
 /* USER CODE END 0 */
 
@@ -172,6 +202,21 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
+  HAL_Delay(1000); // 1000 ms delay to let UART buffers settle
+  printf("Reading device id :\r\n");
+  ADXL362_ReadID();
+  printf("Reading STATUS before measuring :\r\n");
+  ADXL362_ReadStatus();
+
+  HAL_Delay(1000); // 1000 ms delay to read the prev status
+  /* After reading device ID and status */
+  printf("Enabling measurement mode...\r\n");
+  ADXL362_WriteRegister(ADXL362_POWER_CTL_REG, ADXL362_MEASURE);
+
+  printf("Reading STATUS after measuring :\r\n");
+  ADXL362_ReadStatus();
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -182,8 +227,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 	printf("Counter: %lu\r\n", counter);
-    ADXL362_ReadID();  // Read and print the device ID
-    ADXL362_ReadStatus();
+//    ADXL362_ReadStatus();
+	ADXL362_ReadXYZ();
 
 
 	counter++; // increment counter
