@@ -2,7 +2,17 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Simple ADXL362 ID read via SPI
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2025 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -11,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -35,7 +46,9 @@ SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+uint32_t counter = 0;  // global counter
+uint8_t txData[3];
+uint8_t rxData[3];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -45,14 +58,16 @@ static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
+int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint8_t txData[3];
-uint8_t rxData[3];
-char msg[64];
-
 void ADXL362_ReadID(void)
 {
     uint8_t devid;
@@ -70,12 +85,58 @@ void ADXL362_ReadID(void)
     // CS HIGH
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
 
-    devid = rxData[2]; // Third byte is the device ID
+    // Print transmitted bytes in **one line**
+    printf("TX Data (device id): 0x%02X 0x%02X 0x%02X\r\n", txData[0], txData[1], txData[2]);
 
-    // "println" style output
-    sprintf(msg, "ADXL362 Device ID: 0x%02X\r\n", devid);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    // Print received bytes in **three lines**
+    printf("RX Data[0]: 0x%02X\r\n", rxData[0]);
+    printf("RX Data[1]: 0x%02X\r\n", rxData[1]);
+    printf("RX Data[2]: 0x%02X\r\n", rxData[2]);
+
+    devid = rxData[2]; // Third byte is the device ID
+    printf("ADXL362 Device ID: 0x%02X\r\n", devid);
 }
+
+
+void ADXL362_ReadStatus(void)
+{
+    uint8_t status;
+
+    // CS LOW
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
+
+    // Read STATUS register (0x0B)
+    txData[0] = 0x0B;  // Read command
+    txData[1] = 0x0B;  // STATUS register address
+    txData[2] = 0x00;  // Dummy byte
+
+    HAL_SPI_TransmitReceive(&hspi1, txData, rxData, 3, HAL_MAX_DELAY);
+
+    // CS HIGH
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
+
+    status = rxData[2];
+
+    // Print TX bytes
+    printf("TX Data (Status): 0x%02X 0x%02X 0x%02X\r\n", txData[0], txData[1], txData[2]);
+
+    // Print RX bytes
+    printf("RX Data[0]: 0x%02X\r\n", rxData[0]);
+    printf("RX Data[1]: 0x%02X\r\n", rxData[1]);
+    printf("RX Data[2]: 0x%02X\r\n", rxData[2]);
+
+    // Print STATUS in human-readable format
+    printf("ADXL362 STATUS: 0x%02X\r\n", status);
+    printf("  ERROR        : %s\r\n", (status & 0x80) ? "1" : "0");
+    printf("  READY        : %s\r\n", (status & 0x40) ? "1" : "0");
+    printf("  ACTIVITY     : %s\r\n", (status & 0x20) ? "1" : "0");
+    printf("  INACTIVITY   : %s\r\n", (status & 0x10) ? "1" : "0");
+    printf("  FIFO_OVERRUN : %s\r\n", (status & 0x08) ? "1" : "0");
+    printf("  FIFO_WATERMARK: %s\r\n", (status & 0x04) ? "1" : "0");
+    printf("  FIFO_READY   : %s\r\n", (status & 0x02) ? "1" : "0");
+    printf("  RESERVED     : %s\r\n", (status & 0x01) ? "1" : "0");
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -118,9 +179,16 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	    ADXL362_ReadID();  // Prints device ID with newline
-	    HAL_Delay(1000);   // 1-second interval
+
     /* USER CODE BEGIN 3 */
+	printf("Counter: %lu\r\n", counter);
+    ADXL362_ReadID();  // Read and print the device ID
+    ADXL362_ReadStatus();
+
+
+	counter++; // increment counter
+	HAL_Delay(1000); // wait 1 second
+
   }
   /* USER CODE END 3 */
 }
@@ -208,13 +276,13 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi1.Init.CRCPolynomial = 7;
   hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
   {
     Error_Handler();
