@@ -22,6 +22,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "flip_sim_c/scene.h"
+#include "flip_sim_c/flip_utils.h"
+#include "flip_sim_c/flip_fluid.h"
 
 /* USER CODE END Includes */
 
@@ -64,6 +67,7 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint32_t counter = 0;  // global counter
+static Scene g_scene;
 
 /* USER CODE END PV */
 
@@ -209,12 +213,43 @@ void matrixInit (void)
 	max7219_write(0x0F, 0);     // No display test
 }
 
+static void matrixShowRows(uint8_t rows[8])
+{
+	for (int i = 1; i <= 8; i++)
+	{
+		max7219_write(i, rows[8 - i]);
+	}
+}
+
 void matrixData(int num)
 {
 	for (int i=1; i<=8; i++)
 	{
 		max7219_write(i, charData[num][8-i]);
 	}
+}
+
+static void matrixFromFluid(void)
+{
+	if (!g_scene.fluid || !g_scene.fluid->cellColor) return;
+
+	uint8_t rows[8] = {0};
+	for (int row = 1; row <= 8; row++)
+	{
+		uint8_t bits = 0;
+		for (int col = 1; col <= 8; col++)
+		{
+			int idx = row * 10 + col;
+			float v = g_scene.fluid->cellColor[idx];
+			if (v > 0.01f)
+			{
+				bits |= (1u << (col - 1));
+			}
+		}
+		rows[row - 1] = bits;
+	}
+
+	matrixShowRows(rows);
 }
 
 
@@ -298,19 +333,37 @@ int main(void)
 		counter++;
 
 	//	ADXL362_ReadStatus();
-		ADXL362_ReadXYZ();
+		// Read raw X/Y and map to gravity
+		uint8_t x_raw = ADXL362_ReadRegister(ADXL_XDATA_REG);
+		uint8_t y_raw = ADXL362_ReadRegister(ADXL_YDATA_REG);
+		double gx = ((int)x_raw - 128) / 64.0 * 9.81;
+		double gy = ((int)y_raw - 128) / 64.0 * 9.81;
 
-	printf("Setting matrix LEDs");
+		// Lazy init scene on first loop
+		if (g_scene.fluid == NULL)
+		{
+			g_scene = scene_default();
+			setupScene(&g_scene);
+			g_scene.paused = false;
+		}
 
-	  for (int i=0; i<10; i++)
-	  {
-		  matrixData(i);
-		  HAL_Delay(500);
-	  }
+		// Step fluid and update matrix
+		simulateFlipFluid(
+			g_scene.fluid,
+			g_scene.dt,
+			gx,
+			gy,
+			g_scene.flipRatio,
+			g_scene.numPressureIters,
+			g_scene.numParticleIters,
+			g_scene.overRelaxation,
+			g_scene.compensateDrift,
+			g_scene.separateParticles
+		);
 
+		matrixFromFluid();
 
-		// Wait 1 second
-		HAL_Delay(1000);
+		HAL_Delay(50);
 
   }
   /* USER CODE END 3 */
