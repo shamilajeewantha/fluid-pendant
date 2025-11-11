@@ -305,12 +305,12 @@ int main(void)
 	  for (int i=0; i<10; i++)
 	  {
 		  matrixData(i);
-		  HAL_Delay(5);
+		  HAL_Delay(500);
 	  }
 
 
 		// Wait 1 second
-		HAL_Delay(10);
+		HAL_Delay(1000);
 
   }
   /* USER CODE END 3 */
