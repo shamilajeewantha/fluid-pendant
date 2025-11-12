@@ -161,17 +161,35 @@ void ADXL362_ReadStatus(void)
     printf("  RESERVED     : %s\r\n", (status & 0x01) ? "1" : "0");
 }
 
+
 void ADXL362_ReadXYZ(void)
 {
-    uint8_t x = ADXL362_ReadRegister(ADXL_XDATA_REG);
-    uint8_t y = ADXL362_ReadRegister(ADXL_YDATA_REG);
-    uint8_t z = ADXL362_ReadRegister(ADXL_ZDATA_REG);
+    uint8_t x_raw = ADXL362_ReadRegister(ADXL_XDATA_REG);
+    uint8_t y_raw = ADXL362_ReadRegister(ADXL_YDATA_REG);
+    uint8_t z_raw = ADXL362_ReadRegister(ADXL_ZDATA_REG);
 
-    printf("X: %d\tY: %d\tZ: %d\r\n", x, y, z);
+    float x_g, y_g, z_g;
+
+    // Low-res mapping: exactly as your table
+    if (x_raw <= 128)
+        x_g = ((float)x_raw) / 64.0 * -1.0 * 9.81;     // 0→64→128 = 0→-1→-2 g
+    else
+        x_g = ((float)(255 - x_raw)) / 63.0 * 9.81 * 1.0;  // 128→192→255 = 2→1→0 g
+
+    if (y_raw <= 128)
+        y_g = ((float)y_raw) / 64.0 * -1.0 * 9.81;
+    else
+        y_g = ((float)(255 - y_raw)) / 63.0 * 9.81;
+
+    if (z_raw <= 128)
+        z_g = ((float)z_raw) / 64.0 * -1.0 * 9.81;
+    else
+        z_g = ((float)(255 - z_raw)) / 63.0 * 9.81;
+
+    // Print raw + mapped g
+    printf("X_raw=%3d, Y_raw=%3d, Z_raw=%3d | X_g=%6.2f m/s², Y_g=%6.2f m/s², Z_g=%6.2f m/s²\r\n",
+           x_raw, y_raw, z_raw, x_g, y_g, z_g);
 }
-
-
-
 
 
 

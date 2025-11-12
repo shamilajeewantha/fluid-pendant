@@ -6,9 +6,9 @@ Scene scene_default(void)
     Scene s;
     s.gravity_x         = 0.0f;
     s.gravity_y         = -9.81f;
-    s.dt                = 1.0f / 120.0f;   // ~120 FPS
+    s.dt                = 1.0f / 60.0f;   // ~60 FPS
     s.flipRatio         = 0.9f;
-    s.numPressureIters  = 100;
+    s.numPressureIters  = 5;  // Reduced from 100 for STM32 real-time performance (tune this for speed vs quality)
     s.numParticleIters  = 2;
     s.frameNr           = 0UL;
     s.overRelaxation    = 1.9f;

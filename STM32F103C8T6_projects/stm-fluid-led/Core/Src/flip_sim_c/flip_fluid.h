@@ -12,11 +12,8 @@ typedef struct {
     float tankHeight;
     float h;              // cell size
     float r;              // particle radius
-    float *cellColor;     // add this
+    float *cellColor;     // 10x10 grid for display (row-major)
 } FlipFluid;
-
-// Initialize fluid
-void initFlipFluid(FlipFluid *f, int maxParticles);
 
 // Simulate fluid
 void simulateFlipFluid(

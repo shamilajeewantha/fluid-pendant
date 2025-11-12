@@ -52,6 +52,13 @@
 // ADXL SPI register options
 #define ADXL362_MEASURE 0x02
 
+// Structure to hold accelerometer values
+typedef struct {
+    float x_g;
+    float y_g;
+    float z_g;
+} ADXL362_Values_t;
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -165,15 +172,37 @@ void ADXL362_ReadStatus(void)
     printf("  RESERVED     : %s\r\n", (status & 0x01) ? "1" : "0");
 }
 
-void ADXL362_ReadXYZ(void)
+ADXL362_Values_t ADXL362_ReadXYZ(int print_debug)
 {
-    uint8_t x = ADXL362_ReadRegister(ADXL_XDATA_REG);
-    uint8_t y = ADXL362_ReadRegister(ADXL_YDATA_REG);
-    uint8_t z = ADXL362_ReadRegister(ADXL_ZDATA_REG);
+    uint8_t x_raw = ADXL362_ReadRegister(ADXL_XDATA_REG);
+    uint8_t y_raw = ADXL362_ReadRegister(ADXL_YDATA_REG);
+    uint8_t z_raw = ADXL362_ReadRegister(ADXL_ZDATA_REG);
+    ADXL362_Values_t values;
 
-    printf("X: %d\tY: %d\tZ: %d\r\n", x, y, z);
+    // Low-res mapping: exactly as your table
+    if (x_raw <= 128)
+        values.x_g = ((float)x_raw) / 64.0 * -1.0 * 9.81;     // 0→64→128 = 0→-1→-2 g
+    else
+        values.x_g = ((float)(255 - x_raw)) / 63.0 * 9.81 * 1.0;  // 128→192→255 = 2→1→0 g
+
+    if (y_raw <= 128)
+        values.y_g = ((float)y_raw) / 64.0 * -1.0 * 9.81;
+    else
+        values.y_g = ((float)(255 - y_raw)) / 63.0 * 9.81;
+
+    if (z_raw <= 128)
+        values.z_g = ((float)z_raw) / 64.0 * -1.0 * 9.81;
+    else
+        values.z_g = ((float)(255 - z_raw)) / 63.0 * 9.81;
+
+    // Print raw + mapped g (only if requested - printing is slow!)
+    if (print_debug) {
+        printf("X_raw=%3d, Y_raw=%3d, Z_raw=%3d | X_g=%6.2f m/s², Y_g=%6.2f m/s², Z_g=%6.2f m/s²\r\n",
+               x_raw, y_raw, z_raw, values.x_g, values.y_g, values.z_g);
+    }
+
+    return values;
 }
-
 
 
 
@@ -324,20 +353,20 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
 		// Toggle LED on PC13
-		HAL_GPIO_TogglePin(GPIOC, STATUS_LED_Pin);
+//		HAL_GPIO_TogglePin(GPIOC, STATUS_LED_Pin);
 
-		// Print counter
-		printf("Counter: %lu, LED toggled!\r\n", counter);
+		// Print counter (disabled for performance - re-enable for debugging)
+		// printf("Counter: %lu, LED toggled!\r\n", counter);
 
 		// Increment counter
 		counter++;
 
 	//	ADXL362_ReadStatus();
-		// Read raw X/Y and map to gravity
-		uint8_t x_raw = ADXL362_ReadRegister(ADXL_XDATA_REG);
-		uint8_t y_raw = ADXL362_ReadRegister(ADXL_YDATA_REG);
-		double gx = ((int)x_raw - 128) / 64.0 * 9.81;
-		double gy = ((int)y_raw - 128) / 64.0 * 9.81;
+		// Read raw X/Y/Z and map to gravity using improved mapping
+		// Pass 0 to disable printf (much faster!) - use 1 for debugging
+		ADXL362_Values_t accel = ADXL362_ReadXYZ(0);
+		double gx = (double)accel.x_g;
+		double gy = (double)accel.y_g;
 
 		// Lazy init scene on first loop
 		if (g_scene.fluid == NULL)
@@ -363,7 +392,8 @@ int main(void)
 
 		matrixFromFluid();
 
-		HAL_Delay(50);
+		// Minimal delay - let simulation compute as fast as possible
+		HAL_Delay(1);
 
   }
   /* USER CODE END 3 */
