@@ -45,9 +45,9 @@ DMA_HandleTypeDef hdma_tim1_up;
 DMA_HandleTypeDef hdma_tim1_ch1;
 
 UART_HandleTypeDef huart2;
-
+S
 /* USER CODE BEGIN PV */
-volatile uint32_t loopCounter = 0;
+uint32_t loopCounter = 0;
 int current_off = 0;
 
 static uint32_t bsrr_buf[240] = {
