@@ -8,11 +8,16 @@
 // Setup a scene with FlipFluid
 void setupScene(Scene *scene) {
     if (!scene) return;
-    int res = 9;
+    // Solver grid is padded beyond the GRID_X x GRID_Y display (flip_fluid.h, research.md
+    // Decision 7); fNumX/fNumY come out to PAD_FNUM_X x PAD_FNUM_Y below, so resX/resY are
+    // one less than those padded targets. Cells stay square (same h both directions) by
+    // deriving tankWidth from the same cell size h as tankHeight.
+    int resX = PAD_FNUM_X - 1;
+    int resY = PAD_FNUM_Y - 1;
     float simHeight = 3.0f;
-    float tankHeight = 1.0f * simHeight;
-    float tankWidth  = 1.0f * simHeight;
-    float h = tankHeight / res;
+    float tankHeight = simHeight;
+    float h = tankHeight / resY;
+    float tankWidth = resX * h;
     float density = 10.0f;
 
     float relWaterHeight = 0.8f;
@@ -30,9 +35,11 @@ void setupScene(Scene *scene) {
     FlipFluid *f = (FlipFluid*)malloc(sizeof(FlipFluid));
     f->numParticles = maxParticles;
     f->maxParticles = maxParticles;
-    // Grid resolution should be based on tank size and cell size h (like JS)
-    f->fNumX = (int)floorf(tankWidth  / h) + 1;
-    f->fNumY = (int)floorf(tankHeight / h) + 1;
+    // Grid resolution is fixed to the padded solver size directly (not re-derived via
+    // tankWidth/h, since that floor-division round-trip risks off-by-one errors
+    // from floating-point rounding given tankWidth was itself built from h).
+    f->fNumX = PAD_FNUM_X;
+    f->fNumY = PAD_FNUM_Y;
     f->density = density;
     f->tankWidth = tankWidth;
     f->tankHeight = tankHeight;
@@ -41,7 +48,7 @@ void setupScene(Scene *scene) {
 
     f->particlePos = (float*)malloc(sizeof(float) * maxParticles * 2);
     f->s = (float*)malloc(sizeof(float) * f->fNumX * f->fNumY);
-    f->cellColor = (float*)malloc(sizeof(float) * 10 * 10); // 10x10 grid for cellColor
+    f->cellColor = (float*)malloc(sizeof(float) * GRID_X * GRID_Y); // 15x16 grid for cellColor
 
     // Place particles in hexagonal grid (fits within tank using numX/numY)
     int p = 0;

@@ -194,6 +194,250 @@ already-working ported math unchanged across the Windows simulator and the firmw
 recorded here so it's available as a documented option if a future iteration ever needs to revisit
 that requirement.
 
+## Round 2 — Post-implementation visual QA fixes (2026-06-21)
+
+After Stage 1/Stage 2 were built per Decisions 1–3 above, the user ran both and found four
+issues. Each is resolved below as a further **parameter/UI-only** change — none rewrites the
+FLIP/PIC formulas, consistent with the same constraint Decisions 1–3 operated under.
+
+### Decision 7 — Border LEDs were structurally dead; pad the solver grid
+
+**Problem**: every display cell along the left, right, and bottom edges never lit up, in both
+Stage 1 and Stage 2. Root cause: `setupScene()`'s wall setup (`if (i==0 || i==fNumX-1 || j==0)
+s=0.0`) marks those exact border cells permanently `SOLID`, never `FLUID_CELL` — and since
+`fNumX`/`fNumY` were resized 1:1 with the display (Decision 3), those solid border cells *are*
+the outermost ring of LEDs. They are not "rarely lit" — they are structurally incapable of ever
+lighting. On the original pre-port code (10x10 solver) this was never visible because the old
+display only ever showed a *cropped inner 8x8* of that 10x10 grid — the crop quietly hid the
+dead wall ring. Decision 3's "1:1, no cropping" simplification removed that crop and exposed the
+problem.
+
+**Decision**: reintroduce a crop — but unlike the old crop (which Decision 3 rightly objected to
+as it wasted the display's actual resolution), size the *solver's own grid* one cell larger than
+the display on every side that has a wall, then map only the interior (non-wall) cells onto the
+full `GRID_X`×`GRID_Y`/`DISPLAY_COLS`×`DISPLAY_ROWS` display:
+- Columns (`fNumX`): walls exist on **both** sides (`i==0` and `i==fNumX-1`), so pad symmetrically:
+  solver `fNumX = GRID_X + 2`.
+- Rows (`fNumY`): a wall exists only at the **bottom** (`j==0`); the top (`j==fNumY-1`) is already
+  open/fluid-eligible with no wall. Pad asymmetrically, bottom only: solver `fNumY = GRID_Y + 1`.
+- The display-facing `cellColor` buffer stays exactly `GRID_X * GRID_Y` (240) — the contract in
+  `contracts/physics-core.md` is unchanged. Only the *internal* solver resolution grows; the crop
+  offset (`+1` on x, and a flip so solver row `fNumY-1` lands on display row 0) is applied where
+  the existing crop/flip logic already lived (`update_cell_colors_from_types` in `flip_fluid.c`
+  for Stage 2; `script.js`'s `getGridColors`/`setupScene` for Stage 1 — `flip.js` itself stays
+  resolution-agnostic, unchanged, per the T011 finding).
+
+**Why top isn't padded**: the gravity-direction control only ranges -90°..90° (`gravity_y =
+-cos(angle)*9.81`, and `cos` is non-negative over that whole range), so simulated gravity *never*
+points upward — fluid is never pulled toward the open top edge by design of this control, only by
+splash/momentum. The top display row being sparse is physically correct fluid behavior under a
+downward-biased gravity control, not a structural defect like the other three walled sides, so it
+does not need the same fix.
+
+**Alternatives considered**:
+- *Make the border cells FLUID instead of SOLID*: rejected — a FLIP solver needs solid boundary
+  cells to contain the fluid; without them, particles have no domain to push against and the
+  simulation domain effectively has no edges, breaking pressure projection.
+- *Leave it as a known limitation*: rejected — the LED matrix is physical hardware with a fixed
+  pin count; leaving ~38 of 240 LEDs (the left/right/bottom ring) permanently unlit wastes a third
+  of the addressable column range and a meaningful fraction of total LEDs for no benefit.
+
+### Decision 8 — Stage 1/Stage 2 felt like different fluids; match the one differing parameter
+
+**Problem**: the user observed Stage 2 (C) feeling dense/cohesive while Stage 1 (JS) felt
+"lighter than water." Comparing every scene default between `scene.c`'s `scene_default()` and
+`script.js`'s `scene` object turned up exactly **one** difference: `numPressureIters` — lowered to
+`20` in Stage 2 by Decision 1 (for the embedded performance budget), but left at the original
+`100` in Stage 1 (Decision 1 only targeted the shared physics core, not the independent JS
+prototype, since Stage 1 has no embedded performance constraint). More pressure-solver iterations
+converge the velocity field closer to fully divergence-free each tick, so it disperses/responds to
+pressure gradients more readily (reads as "thinner/lighter"); fewer iterations leave more residual
+divergence, so fluid clumps/resists spreading more (reads as "denser"). This is a side effect of
+Decision 1 being applied asymmetrically, not a pre-existing issue.
+
+**Decision**: lower Stage 1's `numPressureIters` from `100` to `20` in `script.js`, matching Stage
+2. This is the same parameter Decision 1 already established as safe to tune (no formula
+rewritten), now applied for visual-consistency reasons rather than a performance budget. Per
+spec.md's Edge Cases section, Stage 1 vs. Stage 2/3 divergence is explicitly *allowed*, not
+required to match — this fix is a quality improvement, not a contract obligation.
+
+**Alternatives considered**: re-tuning `flipRatio`/`overRelaxation` instead — rejected, since
+those were already identical between both stages; the iteration-count gap was the only actual
+difference found, so it's the only change made.
+
+### Decision 9 — Display polish: cell separators, row/column labels, smaller on-screen cells
+
+**Problem**: Stage 2's window has no visible line between cells (Stage 1 already has this via its
+CSS `gap: 2px`) and the on-screen cell size makes the window fill most of the screen; neither
+stage labels row/column indices.
+
+**Decision**: rendering-only changes, no simulation-scale values touched:
+- Stage 2 (`DrawGrid` in `util.c`): outline each cell rectangle (e.g. `FrameRect`/a border brush)
+  in addition to the existing fill, and reduce `CELL_SIZE` (currently 50px) to a smaller on-screen
+  pixel size. `CELL_SIZE` is purely a Win32 drawing constant (pixels per cell on screen) — it has
+  no relationship to `tankWidth`/`tankHeight`/`h`/`r` (the actual simulation-space scale), so
+  changing it cannot affect simulation behavior.
+- Both stages: draw row indices (0..15) along the left margin and column indices (0..14) along
+  the top margin — static text (`TextOut`/`DrawText` for Stage 2; a labeled row/column of `<div>`s
+  outside the `.grid` for Stage 1), not part of the simulated grid itself.
+
+**Alternatives considered**: shrinking `CELL_SIZE` *and* rescaling the simulation tank together —
+rejected per explicit user instruction ("don't touch any other scaling stuff... otherwise we will
+[mess up] the simulation") — these are kept strictly independent: `CELL_SIZE`/CSS pixel sizes are
+display-only, `tankWidth`/`tankHeight`/`h`/`r`/`resX`/`resY` (Decision 3/7) are simulation-only.
+
+### Decision 10 — Stage 1 Start/Pause control: button instead of keyboard-only
+
+**Problem**: Stage 1's only way to start/pause is pressing the `p` key (`script.js`'s
+`keydown` handler) with no visible affordance in the UI for it, unlike Stage 2 which already has
+explicit Start/Pause buttons (`hwndStartButton`/`hwndPauseButton` in `util.c`).
+
+**Decision**: add explicit "Start"/"Pause" `<button>` elements to `flip_sim.html`, wired in
+`script.js` to toggle `scene.paused` directly — matching Stage 2's existing UI pattern. The
+keyboard shortcut can stay as a bonus shortcut, but the button becomes the primary, discoverable
+control.
+
+**Alternatives considered**: removing keyboard control entirely — not necessary; the gap was the
+*missing visible button*, not the keyboard shortcut's existence.
+
+## Round 3 — Matching both stages to real-water playback speed (2026-06-21)
+
+After Round 2's fixes, the user asked why the two stages still "feel" like different fluids
+(Stage 2 dense, Stage 1 light) and asked to "match them both to real water," explicitly
+constrained to stay STM32L4-friendly ("not too much calculations... just enough").
+
+### Decision 11 — Stage 2's physics clock didn't match its own tick rate
+
+**Problem**: `scene_default()` sets `dt = 1.0f / 120.0f` (≈8.33ms of *simulated* time per physics
+step), but `main.c` only calls `SimulateFluid` every `TIMER_INTERVAL = 20` ms of *real* time (a
+`WM_TIMER` at 50 Hz). So every tick advances the fluid by 8.33ms while 20ms of wall-clock time
+actually passes — Stage 2 plays its own physics back at only ~42% of real speed, i.e. in slow
+motion. Stage 1's `setInterval(update, 1000/120)` targets the same ~8.33ms both for its tick
+interval *and* its `dt`, so it already runs close to real speed by construction. Slow-motion fluid
+reads as thick/syrupy; real-speed fluid reads as thin/watery — this alone explains the "different
+fluid" perception, independent of the `numPressureIters` mismatch already fixed in Round 2
+(Decision 8).
+
+**Decision**: change Stage 2's `scene_default()` to set `dt = TIMER_INTERVAL / 1000.0f` (`0.02f`,
+matching the existing 20ms timer interval) instead of the inherited `1.0f / 120.0f`. This makes
+Stage 2 play back at real-world speed — water-like, not slow-motion — using the exact same number
+of physics ticks per second as before (still 50 Hz). **This is the STM32L4-friendly choice**: the
+alternative (lowering `TIMER_INTERVAL` to ~8ms to match the existing `dt`) would instead increase
+the tick *rate* to 120 Hz — 2.4x more pressure-solver work per second, which is the wrong direction
+for an MCU budget. Changing one constant costs nothing extra to compute.
+
+**Verified empirically** (temporary headless harness, mingw-compiled, run directly, then deleted —
+same pattern as Round 1/2's smoke tests): 3000 steps at `dt = 0.02f` with the existing
+`numPressureIters = 20` produced zero NaN/Inf and no particles escaping the tank bounds — the
+larger timestep does not destabilize the already-reduced iteration count, so no further iteration
+increase (i.e., no extra compute) is needed.
+
+**Stage 1 (JS)**: left unchanged. Its tick-interval target and `dt` were already both ~8.33ms, so
+it has no equivalent mismatch to fix; this round's fix only applies to Stage 2.
+
+**Other "real water" parameters considered and left unchanged**: gravity (`9.81 m/s²`) is already
+real-world Earth gravity. `flipRatio = 0.9` (favors FLIP over PIC) is already the value Müller's
+own reference demo uses specifically because real water has very low viscosity and FLIP preserves
+more energetic, less-damped motion than PIC — lowering it would make the fluid look *more*
+syrupy/viscous, the opposite of "real water." Neither needed any change.
+
+**Alternatives considered**:
+- *Accumulator/delta-time pattern* (measure actual elapsed wall-clock time each tick and step
+  physics by that exact amount, possibly sub-stepping for large frames): more robust against
+  Windows timer jitter, but is meaningfully more code/branching for a desktop preview tool whose
+  job is just to approximate the eventual firmware's fixed-rate tick — rejected as more
+  calculation than "just enough" for this stage; Stage 3's actual tick rate (once chosen) should
+  just get its own matching fixed `dt`, the same lesson this fix teaches.
+- *Lower `TIMER_INTERVAL` to ~8ms instead*: rejected — 2.4x more compute per second for the same
+  visual result works against the explicit STM32L4 budget constraint.
+
+## Round 4 — Surface-cell flicker at rest (2026-06-21)
+
+The user reported that with the gravity slider held still, LEDs along the air/water boundary
+kept blinking even after the fluid visually settled, and asked for the most robust, lightweight,
+STM32L4-friendly fix (verified against literature, see Decision 12 sources).
+
+### Decision 12 — Hysteresis threshold on the already-computed particle density, not the binary cellType
+
+**Problem**: both `update_cell_colors_from_types` (C) and `updateCellColors` (JS) light an LED
+purely from `cellType == FLUID_CELL` — a hard binary flag set by which single cell a particle's
+rounded position currently falls in (`flip_fluid.c` line ~260: `xi = floor(x * h1)`, no smoothing).
+Even at rest, particles never perfectly stop (continuous small corrections from the pressure
+solver and particle-separation pass), so a particle hovering near a cell boundary flips that one
+cell's binary flag every frame — a step function has all its sensitivity concentrated at one
+exact point, so a sub-pixel jitter there produces a full 0→1→0 swing every tick. This is a
+well-documented FLIP/PIC surface-noise artifact (Sources below), worse here because the grid is
+coarse (15x16) with few particles per boundary cell.
+
+**Decision**: replace the binary check with a **hysteresis threshold on `particleDensity`**
+(C: `g_particleDensity`; JS: `this.particleDensity`) — a value **already computed every tick** by
+both solvers (bilinear P2G splat, used today only for the pressure solver's drift compensation),
+so reading it for display costs zero new physics computation. Add one small persisted
+per-display-cell array (`ledState`, 240 cells) that only changes when density crosses one of two
+thresholds, normalized against `particleRestDensity` (also already computed):
+- Turn a cell **ON** once `density > 0.5 * restDensity`.
+- Turn it **OFF** only once `density < 0.2 * restDensity`.
+- Otherwise, leave `ledState` exactly as it was last frame.
+
+This is the standard fix for exactly this class of problem — a Schmitt-trigger-style dual
+threshold so a value oscillating near one boundary can't flip the output, confirmed against
+established sources (below) rather than invented from scratch.
+
+**Why this is the lightest correct fix and STM32L4-appropriate**: no new per-frame computation
+beyond reading an existing array and two float comparisons per display cell (240 cells × 2
+comparisons = 480 comparisons/tick — negligible next to the existing pressure solve). No new
+heap allocation beyond one small static/persisted array (240 floats = 960 bytes, or could be
+packed to 240 bytes/bits later if RAM ever became tight — not needed at this scale on a 64KB-SRAM
+part). **The solver itself — `integrate_particles`, `push_particles_apart`, `transfer_velocities`,
+`solve_incompressibility` — is not touched**; this lives entirely in the existing
+solver-state-to-display-buffer conversion step (`update_cell_colors_from_types` in C,
+`updateCellColors` in JS), which is already the designated single hand-off point per
+`contracts/physics-core.md`. The buffer's size/contract (`GRID_X * GRID_Y`, 1:1 with the display)
+is unchanged.
+
+**Alternatives considered**:
+- *Threshold the raw density with a single cutoff (no hysteresis)*: rejected — moves the noise
+  problem rather than removing it; the density value passes through its most jitter-prone region
+  (the boundary itself) right where a single threshold would sit, so it would still flip almost as
+  often as the binary version.
+- *Exponential moving average (low-pass filter) on the signal instead of hysteresis*: a valid,
+  also-cited technique (sources below), but requires picking and tuning a decay rate and still
+  needs *some* threshold afterward (so doesn't replace hysteresis, only could supplement it) —
+  rejected as the *sole* fix for being strictly more tuning/compute than hysteresis alone for the
+  same result; hysteresis on the existing density field already fully solves the reported problem.
+- *Increase resolution/particle count to reduce surface noise at the source*: cited in the FLIP
+  literature as a real fix, but directly contradicts the spec's STM32L4 compute budget (more
+  particles = more pressure-solve and transfer work every tick) — rejected.
+- *Minimum particles-per-cell filtering*: cited in PIC literature, but requires extra per-cell
+  particle-count bookkeeping the solver doesn't currently expose at the display layer; reusing the
+  already-computed density is simpler and cheaper.
+
+**Empirical finding (important, measured after implementing)**: a side-by-side headless
+comparison (settle 6000 steps under constant gravity, then count state changes over the next 600)
+showed the binary signal flipping 193 times vs. the hysteresis signal flipping 134 times — a real
+~30% reduction, confirming the fix removes the "any tiny move flips it" pathology. However,
+**widening the hysteresis gap further (tested up to ON=0.9/OFF=0.05) barely moved the count
+(125-134), and adding either an exponential-moving-average smoothing pass or a 20-frame minimum
+dwell time on top had *zero* additional effect.** That null result is itself informative: it rules
+out fast noise as the remaining cause (smoothing would have caught that) and rules out
+rapidly-bouncing threshold crossings (a 20-frame dwell requirement would have caught that). The
+remaining ~130 changes per 600 frames are **sustained** transitions — the densely-packed particle
+block genuinely continues rearranging itself slowly over several real-world seconds, which is
+authentic surface motion from this solver's parameters (`flipRatio = 0.9` is lightly damped by
+design — Decision 11), not measurement noise. Suppressing it further would require either tuning
+solver parameters (more separation iterations / more damping — explicitly out of scope here) or a
+debounce delay long enough to also blunt genuine, deliberate gravity-direction changes — a worse
+trade-off than the residual motion itself. The hysteresis fix is kept because it provably removes
+the one-point-infinite-sensitivity defect; the remaining slow surface motion is left as accurate
+physical behavior, not a remaining bug.
+
+**Sources** (from the prior research conversation, retained here for traceability):
+- [Particle-Based Simulation of Fluids (Utah CS)](https://www.sci.utah.edu/~tolga/pubs/ParticleFluidsHiRes.pdf) — particles-per-cell guidance, surface noise in coarse grids
+- [Suppressing grid instability and noise in particle-in-cell simulation by smoothing](https://arxiv.org/html/2503.05123v1) — PIC particle noise and grid-smoothing passes
+- [Flickering in FLIP simulation surface (od|forum)](https://forums.odforce.net/topic/63250-flickering-in-flip-simulation-surface/) — temporal averaging / weak-point filtering for surface flicker
+- [Schmitt Trigger Circuit: Noise Immunity and Hysteresis Guide](https://zbotic.in/schmitt-trigger-circuit-noise-immunity-and-hysteresis-guide/) — dual-threshold mechanism
+- [Proximity Sensor Hysteresis — Wintriss Controls](https://www.wintriss.com/wcg/knowledgebase/proximity-sensor-hysteresis.html) — same mechanism applied to sensor chatter
+
 ## Summary of resolved unknowns
 
 | Unknown | Resolution |
@@ -204,3 +448,9 @@ that requirement.
 | Simulation grid resolution vs. display resolution | 1:1 — resize sim grid to 16x15 to match the LED matrix exactly |
 | LED matrix drive mechanism | Reuse TIM+DMA GPIO `BSRR`/`MODER` pattern from `sample-charlieplexing`, scaled to 16 pins |
 | Sensor part and read mechanism | **MPU-6500** (corrected from ADXL362), accelerometer axes only, gyro disabled; interrupt-driven SPI1 read in Low-Power Accelerometer Mode using the part's Data Ready interrupt |
+| Border LEDs (left/right/bottom) never lit | Solver grid padded 1 cell beyond the display on walled sides (`fNumX=GRID_X+2`, `fNumY=GRID_Y+1`); display `cellColor` contract stays `GRID_X*GRID_Y` |
+| Stage 1 felt much "lighter" than Stage 2 | Single found difference was `numPressureIters` (100 vs. 20) — matched Stage 1 to Stage 2's value |
+| Missing cell separators/row-col labels, oversized Stage 2 window | Rendering-only fixes (`CELL_SIZE`, border-drawing, static text labels) — zero change to simulation-space scale |
+| Stage 1 start/pause was keyboard-only | Added visible Start/Pause buttons matching Stage 2's UI pattern |
+| Stage 2 played back in slow motion (~42% real speed) vs. Stage 1's near-real-time | `scene.dt` changed to match Stage 2's actual 20ms tick interval, at the same 50Hz tick rate (no added compute) |
+| Surface LEDs flicker at rest | Hysteresis threshold on the already-computed `particleDensity`/`particleRestDensity`, replacing the binary `cellType` check, in the existing display-buffer conversion step only |

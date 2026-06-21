@@ -108,10 +108,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // "Grid & Trackbar with Controls": The window title that appears in the window’s title bar.
     // WS_OVERLAPPEDWINDOW: This is the style of the window. WS_OVERLAPPEDWINDOW is a predefined constant that creates a standard window with a title bar, menu, and borders.
     // CW_USEDEFAULT: This specifies the x-coordinate and y-coordinate of the window’s position. CW_USEDEFAULT means the window is placed in a default position.
-    // SIZE * CELL_SIZE + 200: The width of the window, calculated based on the grid size and the cell size, plus some additional space (200 pixels) for UI controls.
-    // SIZE * CELL_SIZE + 200: The height of the window, similarly calculated.
+    // GRID_LEFT + GRID_X * CELL_SIZE + 200: window width = the row-label margin, plus the
+    //   grid itself (GRID_X columns wide), plus some additional space (200 pixels) for UI controls.
+    // GRID_TOP + GRID_Y * CELL_SIZE + 200: window height, similarly calculated.
     HWND hwnd = CreateWindow("GridTrackbarWindow", "Grid & Trackbar with Controls", WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, SIZE * CELL_SIZE + 200, SIZE * CELL_SIZE + 200,
+                             CW_USEDEFAULT, CW_USEDEFAULT,
+                             GRID_LEFT + GRID_X * CELL_SIZE + 200, GRID_TOP + GRID_Y * CELL_SIZE + 200,
                              NULL, NULL, hInstance, NULL);
 
     ShowWindow(hwnd, nCmdShow);     // This function tells Windows to show the window.                         

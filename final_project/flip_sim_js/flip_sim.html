@@ -28,16 +28,23 @@
         -webkit-transition: 0.2s;
         transition: opacity 0.2s;
       }
-      .grid {
+      .labeled-grid {
         display: grid;
-        grid-template-columns: repeat(8, 50px);
-        grid-template-rows: repeat(8, 50px);
+        grid-template-columns: 30px repeat(15, 50px);
+        grid-template-rows: 30px repeat(16, 50px);
         gap: 2px;
       }
       .cell {
         width: 50px;
         height: 50px;
         background-color: gray;
+      }
+      .label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        color: #444;
       }
       .blue {
         background-color: blue !important;
@@ -84,10 +91,13 @@
       class="slider"
     />
     <span id="gravityAngle">0°</span>
+    &nbsp;
+    <button id="startButton" class="button">Start</button>
+    <button id="pauseButton" class="button">Pause</button>
 
     <br />
     <p>Hopping Blue Cell</p>
-    <div class="grid" id="grid"></div>
+    <div class="labeled-grid" id="labeledGrid"></div>
 
     <script type="module" src="script.js"></script>
     <!-- <script src="script.js"></script> -->

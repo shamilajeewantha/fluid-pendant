@@ -29,6 +29,40 @@ session: the sensor is the **MPU-6500** (6-axis IMU, SPI), not the ADXL362 origi
 only its accelerometer axes are used (gyroscope disabled to save power). The constitution was
 amended again (v2.0.0 → v2.1.0) to reflect this.
 
+**Round 2 (2026-06-21, post-implementation visual QA)**: after Stages 1–2 were implemented and run,
+the user found four issues, each resolved as a further parameter/UI-only change (research.md
+Decisions 7–10): (1) the solver grid's wall cells coincided exactly with the outermost ring of
+display cells, so the left/right/bottom LEDs were structurally incapable of ever lighting — fixed
+by padding the solver's internal grid one cell beyond the display on walled sides while keeping the
+display/`cellColor` contract at exactly 16x15; (2) Stage 1 felt noticeably "lighter" than Stage 2 —
+traced to `numPressureIters` being lowered to 20 in Stage 2 (Decision 1) but left at the original
+100 in Stage 1, now matched; (3) Stage 2 had no cell-separator lines or row/column labels and an
+oversized window — fixed via rendering-only changes (a smaller `CELL_SIZE`, cell borders, static
+text labels), explicitly not touching any simulation-space scale value; (4) Stage 1's start/pause
+was keyboard-only (`p`) with no visible control — added explicit Start/Pause buttons matching
+Stage 2's existing UI pattern.
+
+**Round 3 (2026-06-21, "match them both to real water")**: the user asked why the two stages still
+felt like different fluids and asked for both to look like real water, constrained to stay
+STM32L4-friendly (research.md Decision 11). Root cause: Stage 2's `dt` (1/120s, ~8.33ms) didn't
+match its own `WM_TIMER` tick interval (20ms), so it played its own physics back at only ~42% of
+real speed — slow-motion fluid reads as thick/syrupy. Fixed by setting `dt` to match the existing
+20ms interval (same 50Hz tick rate, zero added compute — deliberately not the alternative of
+raising the tick rate to match `dt`, which would cost 2.4x more pressure-solver work per second).
+Verified stable via a headless 3000-step run at the new `dt` with the existing iteration count.
+Stage 1 needed no change — its tick-interval target already approximated its own `dt`.
+
+**Round 4 (2026-06-21, surface-cell flicker at rest)**: the user reported LEDs along the air/water
+boundary blinking even with the gravity slider held still, and asked for the most robust,
+lightweight, STM32L4-friendly fix, researched against current literature (research.md Decision
+12). Root cause: both stages light an LED from a hard binary `cellType` flag that flips fully
+whenever a jittering particle's position crosses one exact cell-boundary point — a step function
+with all its sensitivity concentrated at a single point. Fixed by switching the display threshold
+to a hysteresis check (two thresholds, with a dead zone between them) on `particleDensity`, a
+continuous value both solvers already compute every tick for an unrelated purpose (pressure-solver
+drift compensation) — so the fix costs one persisted 240-cell array and two comparisons per cell
+per frame, with the solver itself untouched.
+
 ## Technical Context
 
 **Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript

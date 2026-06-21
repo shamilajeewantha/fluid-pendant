@@ -6,9 +6,15 @@ Scene scene_default(void)
     Scene s;
     s.gravity_x         = 0.0f;
     s.gravity_y         = -9.81f;
-    s.dt                = 1.0f / 120.0f;   // ~120 FPS
+    // Must match main.c's TIMER_INTERVAL (20 ms / 50 Hz WM_TIMER), not an arbitrary FPS:
+    // dt is how much simulated time each tick advances, so it has to equal how much real
+    // time actually passes between ticks, or the fluid plays back in slow motion/fast
+    // motion relative to real water (research.md Decision 11). scene.c can't include
+    // main.c, so keep this literal in sync with TIMER_INTERVAL by hand if that ever changes.
+    s.dt                = 0.02f;            // 20 ms, matching main.c's TIMER_INTERVAL
+
     s.flipRatio         = 0.9f;
-    s.numPressureIters  = 100;
+    s.numPressureIters  = 20;
     s.numParticleIters  = 2;
     s.frameNr           = 0UL;
     s.overRelaxation    = 1.9f;

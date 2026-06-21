@@ -30,13 +30,49 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// Create the 8x8 grid dynamically
-const gridContainer = document.getElementById("grid");
-for (let i = 0; i < 64; i++) {
-  let cell = document.createElement("div");
-  cell.classList.add("cell");
-  gridContainer.appendChild(cell);
+// Display resolution: 1:1 with the final 16-row x 15-column charlieplexed LED matrix.
+const DISPLAY_ROWS = 16;
+const DISPLAY_COLS = 15;
+
+// The solver's own grid is padded one cell beyond the display on every walled side
+// (left, right, bottom) so those structurally-solid wall cells fall outside the
+// visible window instead of being its outermost ring — see setupScene() and
+// getGridColors() below, and research.md Decision 7.
+const PAD_FNUM_X = DISPLAY_COLS + 2;
+const PAD_FNUM_Y = DISPLAY_ROWS + 1;
+
+// Create the 16x15 grid dynamically, plus a row of column-index labels (1-15)
+// above it and a column of row-index labels (1-16) to its left (1-based for
+// display only; the underlying col/row loop variables stay 0-indexed). Both
+// share one CSS grid (`.labeled-grid`) so they line up with the data cells;
+// only `.cell` elements (not `.label` elements) are touched by updateGridColors() below.
+const gridContainer = document.getElementById("labeledGrid");
+gridContainer.appendChild(document.createElement("div")).classList.add("label"); // corner spacer
+for (let col = 0; col < DISPLAY_COLS; col++) {
+  let colLabel = document.createElement("div");
+  colLabel.classList.add("label");
+  colLabel.textContent = col + 1;
+  gridContainer.appendChild(colLabel);
 }
+for (let row = 0; row < DISPLAY_ROWS; row++) {
+  let rowLabel = document.createElement("div");
+  rowLabel.classList.add("label");
+  rowLabel.textContent = row + 1;
+  gridContainer.appendChild(rowLabel);
+  for (let col = 0; col < DISPLAY_COLS; col++) {
+    let cell = document.createElement("div");
+    cell.classList.add("cell");
+    gridContainer.appendChild(cell);
+  }
+}
+
+// Start/Pause buttons (primary control) — the "p" keyboard shortcut above remains as a bonus.
+document.getElementById("startButton").addEventListener("click", () => {
+  scene.paused = false;
+});
+document.getElementById("pauseButton").addEventListener("click", () => {
+  scene.paused = true;
+});
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////// Start Simulator ////////////////////////////////////////////////////////
@@ -49,7 +85,7 @@ var scene = {
   gravity_y: -9.81,
   dt: 1.0 / 120.0, // 1/120 = 0.0083 means the simulation runs at 120 FPS (frames per second)
   flipRatio: 0.9, // FLIP conserves vorticity better (more swirly motion), while PIC is more stable.
-  numPressureIters: 100, // Number of iterations for the pressure solver (responsible for keeping water incompressible). Higher values reduce artifacts but increase computation time.
+  numPressureIters: 20, // Number of iterations for the pressure solver (responsible for keeping water incompressible). Matches Stage 2's value so both stages feel comparably "dense" (research.md Decision 8).
   numParticleIters: 2, //Number of iterations for particle-based corrections (to avoid unrealistic compression).
   frameNr: 0,
   overRelaxation: 1.9,
@@ -62,12 +98,22 @@ var scene = {
 };
 
 function setupScene() {
-  // res = 16 means the tank is divided into 16 grid cells in height.
-  var res = 9;
+  // The solver's grid is padded one cell beyond the display on every walled side
+  // (left, right, bottom — see the wall-setup loop below), so those wall cells
+  // fall outside the visible DISPLAY_COLS x DISPLAY_ROWS window instead of
+  // coinciding with its outermost ring (which would otherwise make those display
+  // cells permanently unable to show fluid, since wall cells never become FLUID).
+  // The top has no wall, so it isn't padded. fNumX/fNumY (computed inside
+  // FlipFluid's constructor as floor(width/h)+1 and floor(height/h)+1) come out to
+  // PAD_FNUM_X/PAD_FNUM_Y, so resX/resY here are one less than those padded
+  // targets. Cells stay square (same h both directions) by deriving tankWidth
+  // from the same cell size h as tankHeight.
+  var resX = PAD_FNUM_X - 1;
+  var resY = PAD_FNUM_Y - 1;
 
-  var tankHeight = 1.0 * simHeight;
-  var tankWidth = 1.0 * simHeight;
-  var h = tankHeight / res; // grid cell size
+  var tankHeight = simHeight;
+  var h = tankHeight / resY; // grid cell size
+  var tankWidth = resX * h;
   var density = 10.0;
 
   var relWaterHeight = 0.8;
@@ -116,40 +162,37 @@ function setupScene() {
 }
 
 function draw() {
-  if (scene.fluid.cellColor && scene.fluid.cellColor.length === 100) {
+  const expectedCells = PAD_FNUM_X * PAD_FNUM_Y;
+  if (scene.fluid.cellColor && scene.fluid.cellColor.length === expectedCells) {
     updateGridColors(scene.fluid.cellColor);
   } else {
     console.error("Invalid cell color data");
   }
-  // console.log(JSON.stringify(scene.fluid.cellColor, null, 2));
-  // it logs the color grid like this. 3 for each cell. for 100 cells, it will be 300 values
-  //  {
-  //   "0": 0.5,
-  //   "1": 0.5,
-  //   "2": 0.5,
-  //   "3": 0.5,
-  //   "4": 0.5,
-  //   "5": 0.5,
-  //   "6": 0.5,
-  //  }
 }
 
-// Extract middle 64 cells from the 10×10 grid
-function getMiddle64Colors(cellColor) {
-  let middleColors = [];
-  for (let col = 8; col >= 1; col--) {
-    for (let row = 1; row <= 8; row++) {
-      let cellIndex = row * 10 + col; 
+// Crop the padded fNumX x fNumY solver grid down to the DISPLAY_ROWS x
+// DISPLAY_COLS display: display column c reads solver column (c + 1), skipping
+// the solver's left/right wall columns; the solver's open top (no wall) is at
+// solver row (PAD_FNUM_Y - 1), so display row r (0 = top of screen) reads solver
+// row (PAD_FNUM_Y - 1 - r), skipping only the solver's bottom wall row.
+// FlipFluid stores cells as cellColor[x * fNumY + y].
+function getGridColors(cellColor) {
+  let colors = [];
+  for (let row = 0; row < DISPLAY_ROWS; row++) {
+    for (let col = 0; col < DISPLAY_COLS; col++) {
+      let simX = col + 1;
+      let simY = PAD_FNUM_Y - 1 - row;
+      let cellIndex = simX * PAD_FNUM_Y + simY;
       let g = cellColor[cellIndex] || 0;
-      middleColors.push(`rgb(0, ${g * 255}, 0)`);
+      colors.push(`rgb(0, ${g * 255}, 0)`);
     }
   }
-  return middleColors;
+  return colors;
 }
 
 // Function to update the grid colors
 function updateGridColors(cellColor) {
-  const colors = getMiddle64Colors(cellColor);
+  const colors = getGridColors(cellColor);
   document.querySelectorAll(".cell").forEach((cell, index) => {
     cell.style.backgroundColor = colors[index];
   });

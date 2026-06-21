@@ -15,6 +15,15 @@ open final_project/flip_sim_js/flip_sim.html
 animates; moving the gravity-direction control visibly redirects the fluid within a few frames
 (spec SC-001). This validates spec User Story 1 in isolation.
 
+**Round 2 checks** (research.md Decisions 7–10):
+- Use the visible **Start**/**Pause** buttons, not just the `p` key, to control the simulation.
+- Row/column index labels are visible around the grid.
+- Over time (try several gravity-angle settings), fluid visibly reaches the left, right, and
+  bottom edge cells — those are no longer permanently dead/unlit. The very top row may stay sparse
+  most of the time — that's expected, since this control never points gravity upward.
+- The fluid's overall "weight"/responsiveness should feel comparable to Stage 2, not noticeably
+  lighter (pressure-iteration count now matches).
+
 ## Stage 2 — Windows simulator
 
 **Prerequisites**: MinGW (`gcc`) on PATH, on Windows.
@@ -35,6 +44,21 @@ Testing section): run with the simulation unpaused for several minutes and confi
 positions/cell colors never produce `NaN`/`inf` (e.g., temporarily log `cellColor` and grep for
 non-finite values) — this is the cheapest way to catch a parameter-tuning mistake (e.g., too few
 pressure iterations causing divergence) before ever touching hardware.
+
+**Round 3 check** (research.md Decision 11): time how long it takes a dropped/tilted blob of
+fluid to fall and settle — it should look like real-time water motion, not slow motion. (Already
+verified headlessly: 3000 steps at the corrected `dt` produced no instability.)
+
+**Round 4 check** (research.md Decision 12): hold the gravity slider still for 10+ seconds after
+the fluid settles. The LEDs along the air/water boundary should hold a stable pattern — no
+per-frame blinking — while still updating promptly if the slider is then moved again.
+
+**Round 2 checks** (research.md Decisions 7, 9):
+- Cell separator lines are visible between cells, and row/column index labels are visible.
+- The window no longer fills most of the screen (smaller on-screen `CELL_SIZE`).
+- Fluid visibly reaches the left, right, and bottom edge cells over time/different gravity angles
+  — those are no longer permanently dead/unlit (the solver's internal grid is now padded one cell
+  beyond the display on walled sides; the display itself is still exactly 16x15).
 
 ## Stage 3 — Firmware on the axelor board (STM32L431CC) — DEFERRED
 

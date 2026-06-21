@@ -6,12 +6,18 @@
 
 #include <windows.h>
 #include <commctrl.h>  // Ensure this is included for trackbar support
-#include "scene.h"
+#include "scene.h"     // also brings in flip_fluid.h's GRID_X (columns) / GRID_Y (rows)
 
-#define SIZE 8
-#define CELL_SIZE 50
+// On-screen pixel size of one grid cell and the margin reserved for row/column
+// index labels. Both are pure rendering constants — changing them cannot affect
+// simulation behavior (research.md Decision 9); they have no relationship to
+// tankWidth/tankHeight/h/r in flip_utils.c.
+#define CELL_SIZE 30
+#define LABEL_MARGIN 30
+#define GRID_LEFT LABEL_MARGIN
+#define GRID_TOP LABEL_MARGIN
 
-extern int grid[SIZE][SIZE];
+extern int grid[GRID_Y][GRID_X];
 extern HWND hwndTrackbar, hwndStatic, hwndStartButton, hwndPauseButton, hwndStateTextbox;
 extern Scene scene;
 

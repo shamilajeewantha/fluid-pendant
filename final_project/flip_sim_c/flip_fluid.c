@@ -7,9 +7,6 @@ static inline float ff_maxf(float a, float b){return a > b ? a : b;}
 static inline float ff_minf(float a, float b){return a < b ? a : b;}
 static inline float ff_clamp(float x, float lo, float hi){return x < lo ? lo : (x > hi ? hi : x);} 
 
-#define GRID_X 10
-#define GRID_Y 10
-
 // Internal, lazily allocated state for velocities. We intentionally keep this
 // local to this file to avoid changing public headers.
 static float *g_particleVel = NULL; // size 2 * maxParticles
@@ -75,14 +72,12 @@ static void ensure_alloc_particle_vel(const FlipFluid *f) {
     g_alloc_for_particles = f->maxParticles;
 }
 
-static void integrate_particles(FlipFluid *f, float dt, double gx, double gy) {
+static void integrate_particles(FlipFluid *f, float dt, float gx, float gy) {
     if (!f || !f->particlePos || f->numParticles <= 0) return;
     ensure_alloc_particle_vel(f);
-    const float gxf = (float)gx;
-    const float gyf = (float)gy;
     for (int i = 0; i < f->numParticles; i++) {
-        g_particleVel[2*i + 0] += dt * gxf;
-        g_particleVel[2*i + 1] += dt * gyf;
+        g_particleVel[2*i + 0] += dt * gx;
+        g_particleVel[2*i + 1] += dt * gy;
         f->particlePos[2*i + 0] += g_particleVel[2*i + 0] * dt;
         f->particlePos[2*i + 1] += g_particleVel[2*i + 1] * dt;
     }
@@ -351,17 +346,40 @@ static void solve_incompressibility(FlipFluid *f, int numIters, float dt, float 
     }
 }
 
-// Map particles to a fixed 10x10 display grid; 1.0 where any fluid exists.
+// Persisted hysteresis state per display cell (research.md Decision 12) — see the
+// LED_ON_THRESHOLD/LED_OFF_THRESHOLD comment in flip_fluid.h.
+static float g_ledState[GRID_X * GRID_Y];
+
+// Export in ROW-MAJOR layout (row*GRID_X + col) to match JS getMiddle64Colors.
+// Uses a hysteresis threshold on g_particleDensity (already computed every tick for
+// solve_incompressibility's drift compensation) instead of the binary g_cellType flag.
+// g_cellType flips fully the instant a jittering particle's position crosses one exact
+// cell boundary; g_particleDensity changes smoothly with position, and the dead zone
+// between the two thresholds absorbs that jitter so an LED only changes when there's a
+// real, sustained change in fluid coverage.
 static void update_cell_colors_from_types(const FlipFluid *f, float *outColors) {
-    if (!f || !outColors || !g_cellType) return;
-    // Export in ROW-MAJOR layout (row*10 + col) to match JS getMiddle64Colors
+    if (!f || !outColors || !g_cellType || !g_particleDensity) return;
     const int n = g_fNumY;
-    for (int k = 0; k < GRID_X * GRID_Y; k++) outColors[k] = 0.0f;
-    for (int x = 0; x < f->fNumX && x < GRID_X; x++) {
-        for (int y = 0; y < f->fNumY && y < GRID_Y; y++) {
-            int src = x * n + y;           // solver index
-            int dst = y * GRID_X + x;      // row-major index (row=y, col=x)
-            if (g_cellType[src] == FLUID_CELL) outColors[dst] = 1.0f;
+    // Crop the padded solver grid (f->fNumX x f->fNumY, research.md Decision 7) down to
+    // GRID_X x GRID_Y: skip the wall columns (x=0, x=fNumX-1) and the bottom wall row
+    // (y=0); the open top (y=fNumY-1) has no wall and is included as the last display row.
+    for (int x = 0; x < f->fNumX; x++) {
+        int dstX = x - 1;
+        if (dstX < 0 || dstX >= GRID_X) continue;
+        for (int y = 0; y < f->fNumY; y++) {
+            int dstY = y - 1;
+            if (dstY < 0 || dstY >= GRID_Y) continue;
+            int src = x * n + y;            // solver index
+            int dst = dstY * GRID_X + dstX; // row-major index (row=dstY, col=dstX)
+            float normalized = (g_particleRestDensity > 0.0f)
+                ? g_particleDensity[src] / g_particleRestDensity
+                : 0.0f;
+            if (normalized > LED_ON_THRESHOLD) {
+                g_ledState[dst] = 1.0f;
+            } else if (normalized < LED_OFF_THRESHOLD) {
+                g_ledState[dst] = 0.0f;
+            }
+            outColors[dst] = g_ledState[dst];
         }
     }
 }
@@ -371,8 +389,8 @@ static void update_cell_colors_from_types(const FlipFluid *f, float *outColors) 
 void simulateFlipFluid(
     FlipFluid *f,
     float dt,
-    double gravity_x,
-    double gravity_y,
+    float gravity_x,
+    float gravity_y,
     float flipRatio,
     int numPressureIters,
     int numParticleIters,
