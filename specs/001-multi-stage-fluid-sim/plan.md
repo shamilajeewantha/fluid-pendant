@@ -1,0 +1,156 @@
+# Implementation Plan: Multi-Stage Fluid Simulation Pendant
+
+**Branch**: `001-multi-stage-fluid-sim` | **Date**: 2026-06-21 | **Spec**: [spec.md](./spec.md)
+
+**Input**: Feature specification from `/specs/001-multi-stage-fluid-sim/spec.md`
+
+**Note**: This template is filled in by the `/speckit-plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
+
+## Summary
+
+Port the existing, already-working FLIP/PIC fluid simulation source (`final_project/flip_sim_c`,
+paired with the visual reference `final_project/flip_sim_js`) onto this project's real hardware
+target — an **STM32L431CC** ("axelor" board) driving a **16-row x 15-column charlieplexed LED
+matrix** from **MPU-6500 IMU (accelerometer axes only)** input — without rewriting the underlying
+physics formulas.
+The physics core is parameter-tuned (fewer pressure-solver iterations, single-precision float
+everywhere, grid/particle count resized to match the 16x15 display 1:1) to fit the MCU's real-time
+budget, and the browser prototype and Windows simulator are both updated to the same 16x15
+resolution so all three stages stay visually consistent before flashing hardware.
+
+This plan corrects a hardware-target error discovered during planning: the project constitution
+recorded **STM32F103C8T6** (no FPU) as the target MCU. The user confirmed the real target is
+**STM32L431CC** (Cortex-M4F, has FPU) via
+https://www.st.com/en/microcontrollers-microprocessors/stm32l431cc.html, which also matches
+`stm_projects/axelor/axelor.ioc` (`Mcu.UserName=STM32L431CCTx`, `RCC.SYSCLKFreq_VALUE=80000000`).
+The constitution has been amended (v1.0.0 → v2.0.0) to reflect this before this plan was written;
+see the Constitution Check section below. A second correction followed in the same planning
+session: the sensor is the **MPU-6500** (6-axis IMU, SPI), not the ADXL362 originally recorded —
+only its accelerometer axes are used (gyroscope disabled to save power). The constitution was
+amended again (v2.0.0 → v2.1.0) to reflect this.
+
+## Technical Context
+
+**Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript
+(ES2017+, no build step) for the Stage 1 browser prototype.
+
+**Primary Dependencies**:
+- Stage 1 (browser): none — plain DOM/Canvas, matches existing `flip_sim_js`.
+- Stage 2 (Windows): Win32 API + Common Controls (already used by `final_project/flip_sim_c`),
+  built with the existing MinGW `Makefile`.
+- Stage 3 (firmware): STM32CubeIDE project using STM32L4xx HAL/CMSIS, modeled on
+  `stm_projects/axelor` (SPI1 already configured for the accelerometer) and reusing the
+  TIM+DMA-to-GPIO-`BSRR`/`MODER` charlieplexing driver pattern proven in
+  `stm_projects/sample-charlieplexing`.
+
+**Storage**: N/A — all state is in-memory/runtime; nothing is persisted across power cycles.
+
+**Testing**: No formal unit test framework exists yet for the C core. Per constitution Principle
+III, the ported physics module MUST stay host-buildable; this plan keeps `flip_fluid.c`/`flip_utils.c`/
+`scene.c` free of any STM32 HAL include, which is itself what makes Stage 2 (the Windows build)
+a continuous correctness check for Stage 3's physics. A lightweight host-side smoke test
+(documented in `quickstart.md`) substitutes for a full unit-test suite at this scope.
+
+**Target Platform**: Web browser (Stage 1) · Windows desktop, x86/x64 (Stage 2) ·
+STM32L431CC bare-metal firmware via STM32CubeIDE (Stage 3).
+
+**Project Type**: Multi-stage port — one shared physics core, three independently buildable host
+environments (browser, Windows, embedded).
+
+**Performance Goals**:
+- LED display refresh ≥ 10 FPS (constitution Principle IV floor).
+- Each simulation tick ≤ 50 ms on the STM32L431CC at 80 MHz.
+- Tilt-to-visible-LED-response latency < 500 ms (spec SC-004).
+
+**Constraints**:
+- Flash ≤ 80% of 256 KB, RAM ≤ 80% of 64 KB on the STM32L431CC (constitution Principle IV).
+- Single-precision `float` only in the physics core — no `double` (constitution Principle IV, v2.0.0).
+- DMA-driven LED matrix refresh and SPI sensor transfer; interrupt-driven accelerometer reads;
+  no polling loops (constitution Principle II / Hardware Constraints).
+- Physics core MUST NOT include STM32 HAL headers or reference GPIO/SPI/timer registers
+  (constitution Principle III; this is also spec FR-008/FR-009 and SC-006).
+
+**Scale/Scope**: Single pendant device, single user, one display (16x15 = 240 addressable LEDs via
+16-pin charlieplexing), one accelerometer. Simulation domain resized to 16x15 cells (from the
+original ~10x10), particle count scaled proportionally from the original ~56 (see research.md
+Decision 3).
+
+## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+
+| Principle / Constraint | Status | Notes |
+|---|---|---|
+| I. Clean Code Quality | PASS | Porting preserves existing identifier/structure conventions; any new charlieplex pin-table code will use named constants, not magic numbers. |
+| II. Low-Power C Development | PASS (planned) | Firmware will use STOP mode between simulation ticks once frame-rate budget is confirmed on hardware; DMA for display refresh and SPI keeps the CPU free to sleep. Power validation on real hardware is a Stage 3 task, not a plan-time gate. |
+| III. Modular Architecture | PASS | `flip_fluid.c/.h`, `flip_utils.c/.h`, `scene.c/.h` are already HAL-free and will be ported unchanged in logic; new charlieplex driver and MPU-6500 driver are separate modules per contracts/. |
+| IV. Performance Requirements | PASS (post-amendment) | Was failing under the old (wrong) constitution, which mandated fixed-point for a no-FPU chip that isn't the real target. Now aligned: float32 throughout, STM32L431CC has the FPU to support it. Iteration-count reduction (research.md Decision 1) is the lever for the 50ms/tick budget. |
+| Hardware Constraints | PASS (post-amendment) | Target MCU corrected to STM32L431CC; display constraint (16 rows x 15 columns charlieplexed) already matched the spec and is now also recorded in the constitution itself. |
+| Development Workflow | PASS (planned) | New STM32CubeIDE project will compile under `-Wall -Wextra`; on-device validation is a Stage 3 implementation task, tracked in tasks.md, not skipped here. |
+
+No unjustified violations. Complexity Tracking table is not needed (empty).
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/001-multi-stage-fluid-sim/
+├── plan.md              # This file (/speckit-plan command output)
+├── research.md           # Phase 0 output (/speckit-plan command)
+├── data-model.md          # Phase 1 output (/speckit-plan command)
+├── quickstart.md          # Phase 1 output (/speckit-plan command)
+├── contracts/             # Phase 1 output (/speckit-plan command)
+│   ├── physics-core.md
+│   ├── display-driver.md
+│   └── sensor-driver.md
+└── tasks.md               # Phase 2 output (/speckit-tasks command - NOT created by /speckit-plan)
+```
+
+### Source Code (repository root)
+
+```text
+final_project/flip_sim_js/         # Stage 1 — browser prototype (existing, EXTENDED)
+├── flip_sim.html                  # grid updated from 8x8 demo cells to 16x15 to match final display
+├── script.js                      # gravity-direction control kept as-is (matches accel-angle mapping)
+└── flip.js                        # FLIP-style logic local to the prototype only (not shared w/ C)
+
+final_project/flip_sim_c/          # Stage 2 — Windows simulator + canonical ported physics (existing, MODIFIED)
+├── flip_fluid.c / flip_fluid.h     # physics core: GRID_X/GRID_Y resized 16x15, double->float params,
+│                                   #   numPressureIters tuned down (research.md Decision 1 & 2)
+├── flip_utils.c / flip_utils.h     # setupScene(): tank/particle sizing rescaled to fill 16x15 domain
+├── scene.c / scene.h               # Scene struct/defaults — unchanged shape, dt/iteration defaults tuned
+├── util.c / util.h, main.c         # Win32 display/UI glue — ONLY consumer of the 16x15 grid for
+│                                   #   on-screen rendering; no physics changes here
+└── Makefile
+
+stm_projects/<new-pendant-firmware>/   # Stage 3 — STM32CubeIDE project, modeled on stm_projects/axelor
+└── (DEFERRED — see note below; layout kept here only as forward design reference)
+    ├── *.ioc, .project, .cproject         # generated from axelor.ioc (STM32L431CCTx, SPI1 for the IMU)
+    ├── Core/Src/
+    │   ├── physics/                       # flip_fluid.c, flip_utils.c, scene.c copied verbatim from
+    │   │                                   #   final_project/flip_sim_c — NO HAL includes (contracts/physics-core.md)
+    │   ├── display/                       # charlieplex_driver.c — TIM+DMA GPIO BSRR/MODER pattern adapted
+    │   │                                   #   from stm_projects/sample-charlieplexing, scaled to 16 pins
+    │   ├── sensor/                        # mpu6500_driver.c — interrupt-driven SPI1 read of the MPU-6500's
+    │   │                                   #   accelerometer registers only (gyro disabled), adapted from
+    │   │                                   #   this repo's existing adxl-362-sensor/basic-adxl-with-matrix
+    │   │                                   #   driver structure (SPI read/interrupt pattern reused, register
+    │   │                                   #   map and init sequence are MPU-6500-specific, see research.md)
+    │   └── main.c                         # glue only: tick -> read accel -> step physics -> build
+    │                                       #   DisplayFrame -> hand off to display driver
+    └── Core/Inc/ (matching headers)
+```
+
+**Structure Decision**: This implementation pass covers **Stage 1 and Stage 2 only**, both edited
+in place under `final_project/` (the canonical copy — the byte-identical duplicates at the repo
+root, `flip_sim_js/` and `flip_sim_c/`, are intentionally left untouched). **Stage 3 (the STM32
+firmware project) is explicitly out of scope for this plan/tasks pass.** The user will initiate
+the STM32CubeIDE project themselves as a separate, later phase; the Stage 3 design above
+(cloned from `stm_projects/axelor`, contracts/, data-model.md, research.md Decisions 4–6) is kept
+as forward reference so that future phase isn't starting from a blank page, but no Stage 3 files
+are created or modified now, and `tasks.md` contains no Stage 3 execution tasks.
+
+## Complexity Tracking
+
+> Not applicable — no Constitution Check violations require justification.
