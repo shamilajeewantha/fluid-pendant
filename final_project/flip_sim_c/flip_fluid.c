@@ -346,17 +346,12 @@ static void solve_incompressibility(FlipFluid *f, int numIters, float dt, float 
     }
 }
 
-// Persisted hysteresis state per display cell (research.md Decision 12) — see the
-// LED_ON_THRESHOLD/LED_OFF_THRESHOLD comment in flip_fluid.h.
-static float g_ledState[GRID_X * GRID_Y];
-
 // Export in ROW-MAJOR layout (row*GRID_X + col) to match JS getMiddle64Colors.
-// Uses a hysteresis threshold on g_particleDensity (already computed every tick for
-// solve_incompressibility's drift compensation) instead of the binary g_cellType flag.
-// g_cellType flips fully the instant a jittering particle's position crosses one exact
-// cell boundary; g_particleDensity changes smoothly with position, and the dead zone
-// between the two thresholds absorbs that jitter so an LED only changes when there's a
-// real, sustained change in fluid coverage.
+// Renders continuous brightness directly from g_particleDensity (already computed every
+// tick for solve_incompressibility's drift compensation) instead of any on/off decision —
+// research.md Decision 13, which supersedes the Decision 12 hysteresis this replaced.
+// There is no longer a binary state for sub-cell particle jitter to flip between: a cell
+// with a small residual density just glows faintly and steadily.
 static void update_cell_colors_from_types(const FlipFluid *f, float *outColors) {
     if (!f || !outColors || !g_cellType || !g_particleDensity) return;
     const int n = g_fNumY;
@@ -374,12 +369,7 @@ static void update_cell_colors_from_types(const FlipFluid *f, float *outColors) 
             float normalized = (g_particleRestDensity > 0.0f)
                 ? g_particleDensity[src] / g_particleRestDensity
                 : 0.0f;
-            if (normalized > LED_ON_THRESHOLD) {
-                g_ledState[dst] = 1.0f;
-            } else if (normalized < LED_OFF_THRESHOLD) {
-                g_ledState[dst] = 0.0f;
-            }
-            outColors[dst] = g_ledState[dst];
+            outColors[dst] = ff_clamp(normalized, 0.0f, 1.0f);
         }
     }
 }

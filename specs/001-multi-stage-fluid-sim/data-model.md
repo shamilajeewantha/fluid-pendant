@@ -51,7 +51,7 @@ LED matrix should currently show.
 
 | Field | Type | Notes |
 |---|---|---|
-| `cells` | fixed-size array, 16 × 15, one entry per LED | binary on/off per spec Assumptions (no per-cell brightness) |
+| `cells` | fixed-size array, 16 × 15, one entry per LED | continuous brightness 0.0–1.0 per cell (research.md Decision 13, supersedes the original binary-on/off assumption) — derived as `clamp(particleDensity / particleRestDensity, 0, 1)`, no thresholding |
 
 **Validation rules**:
 - Dimensions are fixed at 16 × 15 — never resized at runtime.

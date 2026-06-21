@@ -63,6 +63,34 @@ continuous value both solvers already compute every tick for an unrelated purpos
 drift compensation) — so the fix costs one persisted 240-cell array and two comparisons per cell
 per frame, with the solver itself untouched.
 
+**Round 5 (2026-06-21, realistic display within a fixed 16x15 grid)**: the user asked for the most
+realistic possible rendering of the fluid on the matrix, noting the underlying particles already
+behave realistically — only the binary display was throwing that away — researched against real
+reference projects (research.md Decision 13). Found this project's direct ancestor, mitxela's
+"Fluid Simulation Pendant" (same STM32L4 family, same FLIP algorithm, same originally-assumed
+ADXL362 sensor), which renders from per-cell particle density but achieves visual smoothness via a
+much denser physical LED count plus optical diffusion — neither available to us at a fixed 16x15.
+The available, equally lightweight lever is per-LED brightness: cells now render continuous
+brightness directly from `particleDensity`/`particleRestDensity` (clamped 0-1) instead of any
+binary decision, which **supersedes and removes** Round 4's hysteresis logic entirely (it was a
+patch for a problem only binarization created). Forward-compatible with real hardware via cheap
+bit-angle-modulation PWM in the existing DMA-driven charlieplex scan (documented only — Stage 3
+remains deferred).
+
+**Round 6 (2026-06-21, top display row never lights up)**: the user reported the topmost display
+row never lights up, confirmed via a 20,000-step headless sweep (including violent/upward gravity)
+showing 0.000000 brightness there under any condition — a hard structural exclusion, not a rare
+event (research.md Decision 14). Root cause: an inherited off-by-one in the density-splat and
+velocity-transfer neighbor clamp (`y1 = ... : fNumY-2` instead of `fNumY-1`), harmless in the
+original tutorial's all-four-sides-walled design (that index was a wall cell there) but left that
+row structurally unreachable once Round 2's Decision 7 deliberately opened the top wall — silently
+undoing half of that earlier fix. Corrected the clamp's constant in both files/stages; no formula,
+parameter, or algorithm changed, and `solve_incompressibility`'s separate exclusion of that row
+from direct pressure correction was deliberately left alone (the correct way to represent a
+free/open top surface). A separately reported leftmost-column motion at rest was investigated (no
+code asymmetry found between left/right walls) and the user explicitly accepted it as genuine,
+realistic settling motion rather than asking for a fix.
+
 ## Technical Context
 
 **Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript

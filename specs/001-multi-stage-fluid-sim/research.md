@@ -359,6 +359,12 @@ STM32L4-friendly fix (verified against literature, see Decision 12 sources).
 
 ### Decision 12 — Hysteresis threshold on the already-computed particle density, not the binary cellType
 
+> **Superseded by Round 5's Decision 13** (below): rendering the continuous `particleDensity`
+> value directly as brightness removes the binary on/off state this hysteresis logic was
+> protecting, so the hysteresis/threshold code itself was removed in Round 5, not kept alongside
+> it. Left here for the reasoning trail (why hysteresis was tried first, and what its own
+> empirical testing revealed) — see Decision 13 for what actually shipped.
+
 **Problem**: both `update_cell_colors_from_types` (C) and `updateCellColors` (JS) light an LED
 purely from `cellType == FLUID_CELL` — a hard binary flag set by which single cell a particle's
 rounded position currently falls in (`flip_fluid.c` line ~260: `xi = floor(x * h1)`, no smoothing).
@@ -438,6 +444,184 @@ physical behavior, not a remaining bug.
 - [Schmitt Trigger Circuit: Noise Immunity and Hysteresis Guide](https://zbotic.in/schmitt-trigger-circuit-noise-immunity-and-hysteresis-guide/) — dual-threshold mechanism
 - [Proximity Sensor Hysteresis — Wintriss Controls](https://www.wintriss.com/wcg/knowledgebase/proximity-sensor-hysteresis.html) — same mechanism applied to sensor chatter
 
+## Round 5 — Realistic display rendering within a fixed 16x15 grid (2026-06-21)
+
+The user asked for the most robust, realistic-as-possible way to display the fluid on the fixed
+16x15 matrix, explicitly noting the *particles* already behave like real water even though the
+*display* doesn't, and asked that this be researched against other real fluid-pendant/simulator
+projects on the internet, while staying STM32L4-appropriate with no complex calculations.
+
+### What other real fluid-pendant projects actually do (researched, not assumed)
+
+This project's whole premise (FLIP simulation + charlieplexed matrix + accelerometer pendant) has
+a direct, well-documented ancestor: **mitxela's "Fluid Simulation Pendant"**
+([mitxela.com](https://mitxela.com/projects/fluid-pendant), [Hackaday writeup](https://hackaday.com/2025/01/13/fluid-simulation-pendant-teaches-lessons-in-miniaturization/),
+[Hackaday.io](https://hackaday.io/project/205649-fluid-simulation-pendant)) — it uses an
+**STM32L432KC** (the same L4 family as our STM32L431CC), an **ADXL362** accelerometer (this
+project's originally-assumed sensor before the MPU-6500 correction), a diagonally-charlieplexed
+LED matrix, and Matthias Müller's FLIP tutorial (the exact algorithm family already in this
+codebase) — confirming this project's overall architecture already matches established practice.
+Critically for this question: that pendant's display is colored by **"density (number of
+particles overlapping each grid cell)"** — i.e. the same `particleDensity` field this codebase
+already computes — and the writeup explicitly says brightness control there is **system-wide**
+("varying the voltage to the microchip... dims all pixels evenly"), **not per-LED PWM/greyscale**.
+Realism there instead comes from a denser physical display (216 LEDs in a 25mm pendant, tiny 0402
+pitch) and a watch-glass cover that optically diffuses/blurs adjacent LEDs together — both
+hardware/optical factors, not firmware.
+
+A second related project, a ["fluid simulation business card"](https://hackaday.com/2025/08/12/leds-that-flow-a-fluid-simulation-business-card/)
+([source](https://github.com/Nicholas-L-Johnson/flip-card)), uses 441 LEDs (21×21) and "treats the
+LEDs as particles in a virtual fluid" directly — again, realism via LED count high enough to
+approach particle-level granularity, not via per-pixel brightness tricks. Neither reference
+project's source disclosed any per-LED greyscale/PWM logic.
+
+**Why this matters for our decision**: our display is fixed at 16×15 (240 LEDs) — a real PCB/pin
+constraint, not something this software-planning round can change, so the "use way more LEDs"
+lever both reference projects rely on isn't available to us. The lever that *is* available, and
+that general charlieplexing literature independently confirms is a standard, well-established,
+lightweight technique ([Charlieplexing — Arrow](https://www.arrow.com/en/research-and-events/articles/charlieplexing-an-led-matrix);
+commercial drivers like the [IS31FL3741](https://www.adafruit.com/product/2946) do exactly this in
+hardware), is **per-LED brightness via PWM/duty-cycle modulation within the charlieplex scan** —
+something neither reference project needed (their displays were dense/diffused enough without it)
+but that directly compensates for our coarser, fixed grid.
+
+### Decision 13 — Continuous brightness from `particleDensity`, superseding Round 4's binary hysteresis
+
+**Decision**: stop rendering a binary on/off state at all. Render each display cell's brightness
+directly as `clamp(particleDensity[cell] / particleRestDensity, 0, 1)` — a continuous 0.0–1.0
+value, already exactly the data Round 4 normalized for its thresholds, just used directly instead
+of being collapsed into a yes/no decision first. **This supersedes Decision 12's hysteresis
+entirely** — `g_ledState`/`ledState` and the two thresholds are removed, not kept alongside it.
+
+**Why this is more robust than Round 4's fix, not just different**: hysteresis was a patch for a
+problem *created by* binarization (a continuous, physically-meaningful density value being forced
+into a single bit before display). Rendering the continuous value directly removes the problem at
+its source instead of managing symptoms of it — there is no longer a hard state to flicker
+between, so a cell with a small residual density just glows faintly and steadily instead of
+needing to decide whether it counts as "fluid." This directly reflects the user's own framing: the
+*particles* (and now `particleDensity`, their direct grid projection) already behave realistically
+— it was only the binary squashing step that was throwing that realism away.
+
+**Why this is STM32L4-appropriate / no complex calculations**: the division and clamp are exactly
+the same two operations Decision 12's normalization already did — this is strictly *less*
+computation than before (no persisted state array, no branching dual-threshold comparison). No
+new per-tick math, no spatial blur/smoothing pass across neighboring cells (rejected below), no
+new physics. For the real hardware, this is a documented forward-looking note only (Stage 3
+remains deferred per this project's scope) — the standard, cheap way to realize a continuous
+brightness value on a charlieplexed display is **bit-angle modulation (BAM)**: precompute a
+handful (e.g. 4–8) of binary on/off scan buffers per logical frame, one bit-plane each, and let the
+existing TIM+DMA scan cycle through them — each LED's average brightness over one full frame is
+then just "how many of the bit-plane buffers include it," set once per frame by a couple of bit
+comparisons per cell, not a new per-LED PWM timer. This reuses the same DMA-driven, zero-CPU-
+polling scan architecture research.md Decision 4 already established; no new driver concept.
+
+**Alternatives considered**:
+- *Keep Round 4's hysteresis, just widen/tune it further*: rejected — Round 4's own empirical
+  testing already showed widening the gap and adding smoothing/dwell time had no effect, because
+  the residual issue was information loss from binarization itself, not threshold placement.
+  Continuous brightness fixes the actual cause.
+- *Spatial blur/anti-aliasing across neighboring cells (e.g. averaging with adjacent cells before
+  display)*: rejected — `particleDensity` is already a bilinear P2G-splatted value, i.e. already
+  smoothed across its four nearest grid points; adding a second smoothing pass on top is genuinely
+  new computation (a convolution-like step) for marginal extra benefit at this resolution, directly
+  against the "no complex calculations" constraint.
+- *Increase LED count / matrix resolution to match reference-project realism*: rejected — fixed
+  hardware constraint, explicitly out of scope for this software round.
+- *Per-pixel hue/color shift (e.g. depth-tinted blue/cyan) instead of brightness*: not investigated
+  further — this project's LEDs are single-color per the existing rendering code (`rgb(0, g*255,
+  0)` in the JS prototype, plain on/off `grid[i][j]` in the C app), so only intensity is available,
+  not hue, without new hardware.
+
+### Sources
+
+- [mitxela.com — Fluid Simulation Pendant](https://mitxela.com/projects/fluid-pendant)
+- [Hackaday — Fluid Simulation Pendant Teaches Lessons In Miniaturization](https://hackaday.com/2025/01/13/fluid-simulation-pendant-teaches-lessons-in-miniaturization/)
+- [Hackaday.io — Fluid Simulation Pendant project log](https://hackaday.io/project/205649-fluid-simulation-pendant)
+- [Hackaday — LEDs That Flow: A Fluid Simulation Business Card](https://hackaday.com/2025/08/12/leds-that-flow-a-fluid-simulation-business-card/)
+- [Charlieplexing Tutorial: LED Matrix Panels — Arrow](https://www.arrow.com/en/research-and-events/articles/charlieplexing-an-led-matrix)
+- [Adafruit 16x9 Charlieplexed PWM LED Matrix Driver (IS31FL3741)](https://www.adafruit.com/product/2946)
+
+## Round 6 — Top display row (row 1) never lights up (2026-06-21)
+
+The user reported that after Round 5's brightness rendering shipped (confirmed beautiful and
+realistic via screenshot — graded surface, no hard binary edge), the topmost display row (labeled
+"row 1" in the 1-based UI) never lights up at all, under any condition. They also separately
+flagged the leftmost column showing ongoing up/down motion while the rest of the grid sits still
+at rest — **investigated and explicitly accepted as genuine, realistic settling motion, not a
+bug** (the user's words: "forget it, it looks beautiful and real this way"), the same category of
+finding as Round 4's residual surface motion. No code change was made for that second item.
+
+### Decision 14 — Fix the off-by-one that excludes the open top row from ever receiving density
+
+**Root cause, confirmed empirically before any fix was written**: a 20,000-step headless sweep
+(varying gravity direction violently, including transiently pointing it *upward*, which normal
+operation never does) measured the maximum brightness ever reached in the top display row at
+**0.000000** — proving this is a hard structural exclusion, not a rare/statistical "fluid rarely
+gets up there" effect.
+
+The cause is an inherited off-by-one in `update_particle_density()`'s (`flip_fluid.c`, and the
+matching `updateParticleDensity()` in `flip.js`) bilinear density-splat neighbor clamp:
+
+```c
+int y1 = (y0 + 1 < f->fNumY - 1) ? (y0 + 1) : (f->fNumY - 2);
+```
+
+A particle's y-position is itself already clamped to a maximum of `(fNumY-1)*h` (in
+`handle_collisions`/the position clamp), which makes `y0` naturally cap at `fNumY-2`. At that
+value, the condition `y0+1 < fNumY-1` is false, so `y1` collapses to `fNumY-2` — equal to `y0` —
+instead of advancing to `fNumY-1`. The result: **no particle, at any position, can ever contribute
+density to grid index `fNumY-1`**, the single row this project's Decision 7 deliberately *un-walled*
+specifically so it could hold visible fluid. This same pattern also exists in `transfer_velocities`'
+neighbor clamp, used for both the particle-to-grid and grid-to-particle velocity transfer.
+
+**Why this was invisible until now**: this is the original ten-minute-physics tutorial's own
+boundary-clamp pattern (verified identical in this project's already-existing JS port before this
+fix). In that original demo, *all four* sides are walled, so index `fNumY-1` is a solid wall cell
+in the original design — never receiving density was always correct there, by coincidence, because
+nothing should be there anyway. Decision 7 (Round 2) intentionally removed the top wall so that row
+could legitimately hold fluid for display purposes, but this pre-existing clamp was never revisited
+at the time — it kept behaving as if that row was still walled off, silently undoing half of
+Decision 7's intent. This is a latent defect Decision 7 exposed, not something Round 5 introduced.
+
+**Decision**: correct the upper-neighbor clamp so it can reach the true last valid index
+(`fNumY-1`) instead of stopping one short of it, in **both** places this exact pattern appears
+(`update_particle_density` and `transfer_velocities`, both files, both stages):
+
+```c
+int y1 = (y0 + 1 < f->fNumY) ? (y0 + 1) : (f->fNumY - 1);
+```
+
+The `x0`/`x1` clamp (same pattern, applied to the x-axis) is deliberately left untouched — both
+the left and right walls are real, intentional solid cells (Decision 7's symmetric x-padding), so
+excluding `fNumX-1` there is correct, matching the original design's intent exactly.
+
+**Why this is not a "core simulation" change in the sense the user has repeatedly guarded against**:
+no formula, parameter, or algorithm changes — `flipRatio`, `overRelaxation`, iteration counts,
+gravity handling, and the solver's structure are all untouched. This corrects an array-index bound
+to match what Decision 7 already established as the intended domain shape; it makes the existing
+algorithm internally consistent with its own already-approved boundary change, rather than altering
+how the algorithm behaves. `solve_incompressibility`'s own loop bound (`j < fNumY-1`, excluding the
+top row from direct pressure correction) is **not** changed — that exclusion is the standard,
+correct way to represent a free/open top surface (implicitly zero/atmospheric pressure there), and
+remains appropriate now that the top is genuinely open.
+
+**Alternatives considered**:
+- *Leave the clamp and instead special-case the display to "borrow" a value for the top row from
+  the row below it*: rejected — papers over the real defect with a second, unrelated approximation,
+  and the velocity-transfer instance of the same bug would still silently misbehave near the top.
+- *Rewrite the splat using a different neighbor-selection scheme entirely*: rejected — unnecessary;
+  the existing scheme is correct everywhere except this one off-by-one, so the minimal fix is
+  exactly that — fixing the one wrong constant, not replacing the technique.
+
+### Sources
+
+- Empirical verification: temporary `smoke_test.c` harness (deleted after use), 20,000-step sweep
+  with deliberately violent/inverted gravity, confirmed 0.000000 max brightness in the top row both
+  before and (separately) the expected non-zero result after the fix (see tasks.md Phase 10).
+- User-supplied reference: [Matthias Müller's tenMinutePhysics FLIP tutorial](https://matthias-research.github.io/pages/tenMinutePhysics/18-flip.html),
+  the algorithm this project's `flip_fluid.c`/`flip.js` already port — confirms the original design
+  is walled on all four sides, explaining why this off-by-one was never visible there.
+
 ## Summary of resolved unknowns
 
 | Unknown | Resolution |
@@ -453,4 +637,6 @@ physical behavior, not a remaining bug.
 | Missing cell separators/row-col labels, oversized Stage 2 window | Rendering-only fixes (`CELL_SIZE`, border-drawing, static text labels) — zero change to simulation-space scale |
 | Stage 1 start/pause was keyboard-only | Added visible Start/Pause buttons matching Stage 2's UI pattern |
 | Stage 2 played back in slow motion (~42% real speed) vs. Stage 1's near-real-time | `scene.dt` changed to match Stage 2's actual 20ms tick interval, at the same 50Hz tick rate (no added compute) |
-| Surface LEDs flicker at rest | Hysteresis threshold on the already-computed `particleDensity`/`particleRestDensity`, replacing the binary `cellType` check, in the existing display-buffer conversion step only |
+| Surface LEDs flicker at rest | Hysteresis threshold on the already-computed `particleDensity`/`particleRestDensity` (Decision 12) — **superseded by Decision 13** |
+| Display looks unrealistic / too binary for a fixed 16x15 grid | Render continuous brightness directly from `particleDensity`/`particleRestDensity` (clamped 0-1), no on/off decision at all — researched against real fluid-pendant projects (mitxela's pendant, the FLIP business card); forward-compatible with cheap bit-angle-modulation PWM on real hardware |
+| Top display row (row 1) never lights up | Off-by-one in the density-splat/velocity-transfer upper-neighbor clamp excluded grid index `fNumY-1` entirely (harmless in the original all-walls-closed tutorial design, exposed once Decision 7 opened the top wall); fixed by correcting the clamp to reach the true last index (Decision 14) |

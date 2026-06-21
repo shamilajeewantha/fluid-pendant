@@ -2,13 +2,6 @@ var FLUID_CELL = 0;
 var AIR_CELL = 1;
 var SOLID_CELL = 2;
 
-// Hysteresis thresholds (fractions of particleRestDensity) for updateCellColors() below —
-// research.md Decision 12. A cell turns on once density climbs above LED_ON_THRESHOLD, and
-// only turns back off once it drops below LED_OFF_THRESHOLD; in between, it holds its last
-// state, so sub-cell particle jitter at rest can't flip an LED every frame.
-var LED_ON_THRESHOLD = 0.5;
-var LED_OFF_THRESHOLD = 0.2;
-
 function clamp(x, min, max) {
   if (x < min) return min;
   else if (x > max) return max;
@@ -44,7 +37,6 @@ export class FlipFluid {
     this.particleVel = new Float32Array(2 * this.maxParticles);
     this.particleDensity = new Float32Array(this.fNumCells);
     this.particleRestDensity = 0.0;
-    this.ledState = new Float32Array(this.fNumCells); // persisted hysteresis state, see updateCellColors()
 
     this.particleRadius = particleRadius;
     this.pInvSpacing = 1.0 / (2.2 * particleRadius);
@@ -453,12 +445,7 @@ export class FlipFluid {
         this.particleRestDensity > 0
           ? this.particleDensity[i] / this.particleRestDensity
           : 0;
-      if (normalized > LED_ON_THRESHOLD) {
-        this.ledState[i] = 1;
-      } else if (normalized < LED_OFF_THRESHOLD) {
-        this.ledState[i] = 0;
-      }
-      this.cellColor[i] = this.ledState[i];
+      this.cellColor[i] = clamp(normalized, 0, 1);
     }
   }
 

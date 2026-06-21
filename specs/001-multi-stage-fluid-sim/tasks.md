@@ -409,6 +409,66 @@ gravity changes — the flicker the user reported is resolved, with no solver-fo
 
 ---
 
+## Phase 9: Round 5 — Continuous Brightness Display (supersedes Round 4)
+
+**Purpose**: Replace the binary on/off display (and Round 4's hysteresis patch over it) with
+continuous per-cell brightness rendered directly from `particleDensity`/`particleRestDensity`
+(research.md Decision 13), researched against real fluid-pendant projects. Strictly *less*
+computation than Round 4 (no persisted state, no branching) — solver functions untouched.
+
+### Phase 9a: User Story 1 (Browser prototype) — Round 5
+
+- [x] T050 [P] [US1] In `final_project/flip_sim_js/flip.js`, remove `LED_ON_THRESHOLD`/
+  `LED_OFF_THRESHOLD` and `this.ledState` (superseded by Decision 13)
+- [x] T051 [US1] In `final_project/flip_sim_js/flip.js`'s `updateCellColors()`, replace the
+  hysteresis logic with `this.cellColor[i] = clamp(normalized, 0, 1)`, where `normalized =
+  particleRestDensity > 0 ? particleDensity[i] / particleRestDensity : 0` (reuse the existing
+  module-level `clamp()` helper) (depends on T050) — `script.js`'s `getGridColors()` already
+  renders `cellColor` as `rgb(0, g*255, 0)`, i.e. already brightness-correct; no change needed there
+- [x] T052 [US1] Verify headlessly (temporary harness, delete after use): confirm no NaN/Inf over a
+  full gravity sweep, and confirm `cellColor` now spans a continuous range (print min/max or a
+  histogram after settling) rather than only ever being exactly 0 or 1 (depends on T051) — *0 bad
+  frames; min=0.0000 max=1.0000, 152/240 cells with intermediate (non-0/1) brightness after settling*
+
+### Phase 9b: User Story 2 (Windows simulator) — Round 5
+
+**Depends on**: none of Phase 9a (different files/language) — can run in parallel with it.
+
+- [x] T053 [US2] In `final_project/flip_sim_c/flip_fluid.h`, remove `LED_ON_THRESHOLD`/
+  `LED_OFF_THRESHOLD` (superseded by Decision 13)
+- [x] T054 [US2] In `final_project/flip_sim_c/flip_fluid.c`, remove `g_ledState` and rewrite
+  `update_cell_colors_from_types` to write `outColors[dst] = ff_clamp(normalized, 0.0f, 1.0f)`
+  directly (reuse the existing `ff_clamp` helper already used elsewhere in this file) (depends on
+  T053)
+- [x] T055 [US2] In `final_project/flip_sim_c/util.c`, change `grid[GRID_Y][GRID_X]`'s semantics
+  from binary 0/1 to a 0-255 brightness level: `UpdateGridFromFluid` scales `(int)(g * 255.0f)`
+  instead of thresholding `g > 0.01f`, and `DrawGrid`'s brush color becomes `RGB(0, grid[i][j], 0)`
+  instead of the `grid[i][j] ? RGB(0,255,0) : RGB(0,0,0)` ternary (depends on T054)
+- [x] T056 [US2] Rebuild `final_project/flip_sim_c` (Docker) and confirm it compiles with no new
+  warnings (depends on T055) — *zero warnings/errors, valid PE32+ binary*
+- [x] T057 [US2] Verify headlessly (temporary harness, delete after use): confirm no NaN/Inf over a
+  full gravity sweep, and confirm `cellColor` now spans a continuous range rather than only ever
+  being exactly 0 or 1 (depends on T056) — *0 bad frames; min=0.0000 max=1.0000, 74/240 cells with
+  intermediate brightness after settling*
+
+### Phase 9c: Polish — Round 5
+
+- [ ] T058 Manually validate per `quickstart.md`'s Round 5 check in both apps: confirm a visible
+  brightness gradient at the fluid surface (dimmer near the edge, brighter toward the interior)
+  instead of a hard on/off line (depends on T052, T057) — *needs your eyes; the JS preview's green
+  channel scales linearly with brightness (`rgb(0, g*255, 0)`) and the C app's `DrawGrid` does the
+  same via `grid[i][j]` 0-255, so the surface should now look like a graded dark-to-bright fade
+  rather than a hard black/green line*
+- [x] T059 [P] Update both `README.md`s: replace the Round 4 hysteresis note with a Round 5
+  continuous-brightness note, crediting the researched reference projects briefly (research.md
+  Decision 13 Sources)
+
+**Checkpoint**: Both stages render a realistic continuous brightness gradient instead of a binary
+on/off pattern, validated against real fluid-pendant projects, with no increase in per-tick
+computation versus Round 4.
+
+---
+
 ## Deferred — Stage 3 (Firmware), NOT part of this execution pass
 
 The user will initiate the STM32CubeIDE project themselves as a separate, later phase. The task

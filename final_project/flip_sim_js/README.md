@@ -10,12 +10,16 @@ side (left/right/bottom) — those wall cells would otherwise coincide with, and
 out, the display's own outermost ring of LEDs. `getGridColors()` crops the padding away when
 mapping `cellColor` onto the `.cell` elements.
 
-`FlipFluid.updateCellColors()` (in `flip.js`) lights a cell using a **hysteresis threshold on
-`particleDensity`** (already computed every tick for the pressure solver's drift compensation)
-rather than the raw binary `cellType` flag — `LED_ON_THRESHOLD`/`LED_OFF_THRESHOLD` in `flip.js`.
-A binary flag flips fully the instant a jittering particle crosses one exact cell boundary;
-thresholding the smoother density value, with a gap between the on/off thresholds, prevents that
-sub-pixel jitter from blinking an LED every frame at rest.
+`FlipFluid.updateCellColors()` (in `flip.js`) renders each cell as a **continuous 0.0-1.0
+brightness**, taken directly from `particleDensity / particleRestDensity` (already computed every
+tick for the pressure solver's drift compensation), clamped — not any on/off decision
+(research.md Decision 13, which replaced an earlier hysteresis-based attempt, Decision 12).
+`getGridColors()` already rendered `cellColor` as `rgb(0, g*255, 0)`, so it needed no change to
+pick up the continuous value. This was researched against real fluid-pendant projects (mitxela's
+Fluid Simulation Pendant — this project's direct ancestor — and a 441-LED FLIP business card);
+both get visual smoothness mainly from a much denser physical LED count than our fixed 16x15,
+which isn't available to us, so per-cell brightness is the lightweight, available substitute, and
+is forward-compatible with cheap bit-angle-modulation PWM on the real hardware.
 
 ## Run directly (no server needed)
 
