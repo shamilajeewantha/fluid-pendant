@@ -190,7 +190,7 @@ static void update_particle_density(const FlipFluid *f) {
         int x1 = (x0 + 1 < f->fNumX - 1) ? (x0 + 1) : (f->fNumX - 2);
         int y0 = (int)floorf((y - h2) * h1);
         float ty = (y - h2 - y0 * h) * h1;
-        int y1 = (y0 + 1 < f->fNumY - 1) ? (y0 + 1) : (f->fNumY - 2);
+        int y1 = (y0 + 1 < f->fNumY) ? (y0 + 1) : (f->fNumY - 1);
         float sx = 1.0f - tx;
         float sy = 1.0f - ty;
         int nr0 = x0 * n + y0;
@@ -244,7 +244,7 @@ static void transfer_velocities(FlipFluid *f, int toGrid, float flipRatio) {
             int x1 = (x0 + 1 < f->fNumX - 1) ? (x0 + 1) : (f->fNumX - 2);
             int y0 = (int)ff_minf(floorf((y - dy) * h1), (float)(f->fNumY - 2));
             float ty = (y - dy - y0 * h) * h1;
-            int y1 = (y0 + 1 < f->fNumY - 1) ? (y0 + 1) : (f->fNumY - 2);
+            int y1 = (y0 + 1 < f->fNumY) ? (y0 + 1) : (f->fNumY - 1);
             float sx = 1.0f - tx, sy = 1.0f - ty;
             float d0 = sx * sy, d1 = tx * sy, d2 = tx * ty, d3 = sx * ty;
             int nr0 = x0 * n + y0;
@@ -346,12 +346,18 @@ static void solve_incompressibility(FlipFluid *f, int numIters, float dt, float 
     }
 }
 
+// Persisted hysteresis state per display cell (research.md Decision 12, reinstated by
+// Decision 15) — see the LED_ON_THRESHOLD/LED_OFF_THRESHOLD comment in flip_fluid.h.
+static float g_ledState[GRID_X * GRID_Y];
+
 // Export in ROW-MAJOR layout (row*GRID_X + col) to match JS getMiddle64Colors.
-// Renders continuous brightness directly from g_particleDensity (already computed every
-// tick for solve_incompressibility's drift compensation) instead of any on/off decision —
-// research.md Decision 13, which supersedes the Decision 12 hysteresis this replaced.
-// There is no longer a binary state for sub-cell particle jitter to flip between: a cell
-// with a small residual density just glows faintly and steadily.
+// Uses a hysteresis threshold on g_particleDensity (already computed every tick for
+// solve_incompressibility's drift compensation) instead of the binary g_cellType flag.
+// g_cellType flips fully the instant a jittering particle's position crosses one exact
+// cell boundary; g_particleDensity changes smoothly with position, and the dead zone
+// between the two thresholds absorbs that jitter so an LED only changes when there's a
+// real, sustained change in fluid coverage. The output stays binary (research.md Decision
+// 15 — real charlieplex hardware has no per-LED PWM), not the brief Decision 13 brightness.
 static void update_cell_colors_from_types(const FlipFluid *f, float *outColors) {
     if (!f || !outColors || !g_cellType || !g_particleDensity) return;
     const int n = g_fNumY;
@@ -369,7 +375,12 @@ static void update_cell_colors_from_types(const FlipFluid *f, float *outColors) 
             float normalized = (g_particleRestDensity > 0.0f)
                 ? g_particleDensity[src] / g_particleRestDensity
                 : 0.0f;
-            outColors[dst] = ff_clamp(normalized, 0.0f, 1.0f);
+            if (normalized > LED_ON_THRESHOLD) {
+                g_ledState[dst] = 1.0f;
+            } else if (normalized < LED_OFF_THRESHOLD) {
+                g_ledState[dst] = 0.0f;
+            }
+            outColors[dst] = g_ledState[dst];
         }
     }
 }

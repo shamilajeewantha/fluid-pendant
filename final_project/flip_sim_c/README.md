@@ -12,16 +12,16 @@ the display's own outermost ring of LEDs. `update_cell_colors_from_types()` in `
 crops the padding away, so `cellColor` itself is still exactly `GRID_X * GRID_Y` (see Module
 boundary below).
 
-`update_cell_colors_from_types()` renders each cell as a **continuous 0.0-1.0 brightness**, taken
-directly from `g_particleDensity / g_particleRestDensity` (already computed every tick for the
-pressure solver's drift compensation), clamped — not any on/off decision (research.md Decision
-13, which replaced an earlier hysteresis-based attempt, Decision 12). `util.c`'s `grid[][]` scales
-this to a 0-255 green-channel level for `DrawGrid`'s `RGB(0, grid[i][j], 0)`. This was researched
-against real fluid-pendant projects (mitxela's Fluid Simulation Pendant — this project's direct
-ancestor — and a 441-LED FLIP business card); both get visual smoothness mainly from a much denser
-physical LED count than our fixed 16x15, which isn't available to us, so per-cell brightness is the
-lightweight, available substitute, and is forward-compatible with cheap bit-angle-modulation PWM on
-the real hardware.
+`update_cell_colors_from_types()` lights a cell using a **hysteresis threshold on
+`g_particleDensity`** (already computed every tick for the pressure solver's drift compensation)
+rather than the raw binary `g_cellType` flag — `LED_ON_THRESHOLD`/`LED_OFF_THRESHOLD` in
+`flip_fluid.h` (research.md Decision 12, reinstated by Decision 15). A binary flag flips fully the
+instant a jittering particle crosses one exact cell boundary; thresholding the smoother density
+value, with a gap between the on/off thresholds, prevents that sub-pixel jitter from blinking an
+LED every frame at rest. The output is binary, not a brightness gradient — an earlier round (now
+reverted) briefly rendered continuous brightness, but the real charlieplexed hardware (see
+`stm_projects/sample-charlieplexing`) has no per-LED PWM, so the simulator was brought back to
+binary to keep matching what the real device can actually display.
 
 ## Build natively (Windows + MinGW)
 

@@ -2,6 +2,15 @@ var FLUID_CELL = 0;
 var AIR_CELL = 1;
 var SOLID_CELL = 2;
 
+// Hysteresis thresholds (fractions of particleRestDensity) for updateCellColors() below —
+// research.md Decision 12, reinstated by Decision 15 (real charlieplex hardware has no
+// per-LED PWM, so the display is binary again). A cell turns on once density climbs above
+// LED_ON_THRESHOLD, and only turns back off once it drops below LED_OFF_THRESHOLD; in
+// between, it holds its last state, so sub-cell particle jitter at rest can't flip an LED
+// every frame.
+var LED_ON_THRESHOLD = 0.5;
+var LED_OFF_THRESHOLD = 0.2;
+
 function clamp(x, min, max) {
   if (x < min) return min;
   else if (x > max) return max;
@@ -37,6 +46,7 @@ export class FlipFluid {
     this.particleVel = new Float32Array(2 * this.maxParticles);
     this.particleDensity = new Float32Array(this.fNumCells);
     this.particleRestDensity = 0.0;
+    this.ledState = new Float32Array(this.fNumCells); // persisted hysteresis state, see updateCellColors()
 
     this.particleRadius = particleRadius;
     this.pInvSpacing = 1.0 / (2.2 * particleRadius);
@@ -207,7 +217,7 @@ export class FlipFluid {
 
       var y0 = Math.floor((y - h2) * h1);
       var ty = (y - h2 - y0 * h) * h1;
-      var y1 = Math.min(y0 + 1, this.fNumY - 2);
+      var y1 = Math.min(y0 + 1, this.fNumY - 1);
 
       var sx = 1.0 - tx;
       var sy = 1.0 - ty;
@@ -283,7 +293,7 @@ export class FlipFluid {
 
         var y0 = Math.min(Math.floor((y - dy) * h1), this.fNumY - 2);
         var ty = (y - dy - y0 * h) * h1;
-        var y1 = Math.min(y0 + 1, this.fNumY - 2);
+        var y1 = Math.min(y0 + 1, this.fNumY - 1);
 
         var sx = 1.0 - tx;
         var sy = 1.0 - ty;
@@ -445,7 +455,12 @@ export class FlipFluid {
         this.particleRestDensity > 0
           ? this.particleDensity[i] / this.particleRestDensity
           : 0;
-      this.cellColor[i] = clamp(normalized, 0, 1);
+      if (normalized > LED_ON_THRESHOLD) {
+        this.ledState[i] = 1;
+      } else if (normalized < LED_OFF_THRESHOLD) {
+        this.ledState[i] = 0;
+      }
+      this.cellColor[i] = this.ledState[i];
     }
   }
 

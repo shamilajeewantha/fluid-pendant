@@ -469,6 +469,125 @@ computation versus Round 4.
 
 ---
 
+## Phase 10: Round 6 — Fix Top Display Row Never Lighting Up
+
+**Purpose**: Correct the inherited off-by-one (research.md Decision 14) that structurally excludes
+grid index `fNumY-1` (the open top row, since Decision 7) from ever receiving particle density or
+velocity contributions. One-constant fix in two functions per stage — no formula, parameter, or
+algorithm change; `solve_incompressibility`'s separate, intentional exclusion of that row from
+direct pressure correction (the free/open-surface boundary condition) is left untouched.
+
+### Phase 10a: User Story 1 (Browser prototype) — Round 6
+
+- [x] T060 [P] [US1] In `final_project/flip_sim_js/flip.js`'s `updateParticleDensity()`, change
+  `var y1 = Math.min(y0 + 1, this.fNumY - 2);` to `var y1 = Math.min(y0 + 1, this.fNumY - 1);` —
+  this is the only change in this function
+- [x] T061 [US1] In `final_project/flip_sim_js/flip.js`'s `transferVelocities()`, apply the same
+  fix to its matching `y1` clamp (depends on T060 only in that both touch the same file; otherwise
+  independent)
+- [x] T062 [US1] Verify headlessly (temporary harness, delete after use): repeat the gravity-sweep
+  diagnostic (including a transient upward gravity component) and confirm the top row's `cellColor`
+  now reaches a nonzero value, and confirm no NaN/Inf over a full gravity sweep (depends on T061) —
+  *0 bad frames; max brightness in top row over 20,000 steps = 0.332939 (was 0.000000)*
+
+### Phase 10b: User Story 2 (Windows simulator) — Round 6
+
+**Depends on**: none of Phase 10a (different files/language) — can run in parallel with it.
+
+- [x] T063 [US2] In `final_project/flip_sim_c/flip_fluid.c`'s `update_particle_density()`, change
+  `int y1 = (y0 + 1 < f->fNumY - 1) ? (y0 + 1) : (f->fNumY - 2);` to
+  `int y1 = (y0 + 1 < f->fNumY) ? (y0 + 1) : (f->fNumY - 1);` — this is the only change in this
+  function (the `x0`/`x1` clamp in the same function is deliberately left unchanged — both side
+  walls are real, intentional solid cells)
+- [x] T064 [US2] In `final_project/flip_sim_c/flip_fluid.c`'s `transfer_velocities()`, apply the
+  same fix to its matching `y1` clamp (same file as T063, run after it)
+- [x] T065 [US2] Rebuild `final_project/flip_sim_c` (Docker) and confirm it compiles with no new
+  warnings (depends on T064) — *zero warnings/errors, valid PE32+ binary*
+- [x] T066 [US2] Verify headlessly (temporary harness, delete after use): repeat the 20,000-step
+  violent/upward-gravity sweep from research.md Decision 14's diagnosis and confirm the top row's
+  `cellColor` now reaches a nonzero value (was 0.000000 before this fix), and confirm no NaN/Inf
+  over a full gravity sweep (depends on T065) — *0 bad frames; max brightness in top row over
+  20,000 steps = 0.578976 (was 0.000000)*
+
+### Phase 10c: Polish — Round 6
+
+- [ ] T067 Manually validate per `quickstart.md`'s Round 6 check in both apps: tilt/shake enough to
+  send fluid toward the top of the tank and confirm the topmost display row can now light up
+  (depends on T062, T066) — *needs your eyes; headless verification confirms the row is no longer
+  structurally dead (0.0 -> 0.33-0.58 brightness under violent/upward gravity), but how easily it
+  lights up under realistic -90..90 gravity-angle handling is worth a quick look*
+
+**Checkpoint**: The full 16x15 display is structurally reachable on every side (left, right,
+bottom per Decision 7; top per this fix) — no display cell is permanently dead regardless of how
+the fluid moves.
+
+---
+
+## Phase 11: Round 7 — Revert to Binary Display (real hardware has no per-LED PWM)
+
+**Purpose**: Reverse Round 5's continuous brightness (research.md Decision 13, now superseded) and
+reinstate Round 4's hysteresis-on-density binary logic (Decision 12, restored verbatim by Decision
+15) — confirmed against this project's own `sample-charlieplexing` reference driver, which has no
+per-LED PWM capability. Binary output, but still threshold-from-density (not a raw `cellType`
+flag), so the Round 4 flicker fix isn't lost in the process.
+
+### Phase 11a: User Story 1 (Browser prototype) — Round 7
+
+- [x] T068 [P] [US1] In `final_project/flip_sim_js/flip.js`, reinstate
+  `LED_ON_THRESHOLD = 0.5` / `LED_OFF_THRESHOLD = 0.2` module-level constants and a persisted
+  `this.ledState = new Float32Array(this.fNumCells)` in the `FlipFluid` constructor (same as the
+  original Round 4 code, before Round 5 removed it)
+- [x] T069 [US1] In `final_project/flip_sim_js/flip.js`'s `updateCellColors()`, replace the
+  Round 5 `this.cellColor[i] = clamp(normalized, 0, 1)` line with the Round 4 hysteresis logic:
+  `if (normalized > LED_ON_THRESHOLD) this.ledState[i] = 1; else if (normalized < LED_OFF_THRESHOLD) this.ledState[i] = 0; this.cellColor[i] = this.ledState[i];`
+  (depends on T068)
+- [x] T070 [US1] Verify headlessly (temporary harness, delete after use): confirm `cellColor` is
+  now only ever exactly 0 or 1 (no intermediate values), confirm no NaN/Inf over a full gravity
+  sweep, and confirm the at-rest flip-count is back in the same range as the original Round 4
+  measurement (~134 flips/600 frames) — not regressed to pre-Round-4 flicker levels (depends on
+  T069) — *0 bad frames, 0 non-binary values, 152 flips/600 frames (Round 4 baseline was 134)*
+
+### Phase 11b: User Story 2 (Windows simulator) — Round 7
+
+**Depends on**: none of Phase 11a (different files/language) — can run in parallel with it.
+
+- [x] T071 [US2] In `final_project/flip_sim_c/flip_fluid.h`, reinstate
+  `#define LED_ON_THRESHOLD 0.5f` / `#define LED_OFF_THRESHOLD 0.2f` (same as the original Round 4
+  code, before Round 5 removed it)
+- [x] T072 [US2] In `final_project/flip_sim_c/flip_fluid.c`, reinstate a persisted
+  `static float g_ledState[GRID_X * GRID_Y];` and rewrite `update_cell_colors_from_types` to the
+  Round 4 hysteresis logic (`if (normalized > LED_ON_THRESHOLD) g_ledState[dst] = 1.0f; else if
+  (normalized < LED_OFF_THRESHOLD) g_ledState[dst] = 0.0f; outColors[dst] = g_ledState[dst];`),
+  replacing the Round 5 `outColors[dst] = ff_clamp(normalized, 0.0f, 1.0f);` line (depends on T071)
+- [x] T073 [US2] In `final_project/flip_sim_c/util.c`, revert `grid[GRID_Y][GRID_X]`'s semantics
+  from 0-255 brightness back to binary 0/1: `UpdateGridFromFluid` goes back to
+  `grid[i][j] = (g > 0.01f) ? 1 : 0;`, and `DrawGrid`'s brush color goes back to
+  `grid[i][j] ? RGB(0, 255, 0) : RGB(0, 0, 0)` (depends on T072)
+- [x] T074 [US2] Rebuild `final_project/flip_sim_c` (Docker) and confirm it compiles with no new
+  warnings (depends on T073) — *zero warnings/errors, valid PE32+ binary*
+- [x] T075 [US2] Verify headlessly (temporary harness, delete after use): confirm `cellColor` is
+  now only ever exactly 0.0f or 1.0f, confirm no NaN/Inf over a full gravity sweep, and confirm the
+  at-rest flip-count is back in the same range as the original Round 4 measurement (~120
+  flips/600 frames) (depends on T074) — *0 bad frames, 0 non-binary values, 120 flips/600 frames
+  (exact match to the original Round 4 measurement)*
+
+### Phase 11c: Polish — Round 7
+
+- [ ] T076 Manually validate per `quickstart.md`'s Round 7 check in both apps: confirm cells are
+  back to a hard on/off appearance, and confirm the Round 4 no-flicker-at-rest behavior still holds
+  (depends on T070, T075) — *needs your eyes; headless verification confirms strictly binary
+  output (0 non-binary values in both stages) and at-rest flip-rates matching the original Round 4
+  baselines (152 vs. 134 JS, 120 vs. 120 C exactly), so flicker should not be back*
+- [x] T077 [P] Update both `README.md`s: replace the Round 5 continuous-brightness note with a
+  note that cells are binary again (hysteresis-on-density, not raw `cellType`), per research.md
+  Decision 15 — real hardware has no per-LED PWM
+
+**Checkpoint**: Both stages render binary on/off cells again, matching real charlieplex hardware
+capability, with the Round 4 flicker fix still intact (hysteresis on density, not a raw step
+function).
+
+---
+
 ## Deferred — Stage 3 (Firmware), NOT part of this execution pass
 
 The user will initiate the STM32CubeIDE project themselves as a separate, later phase. The task

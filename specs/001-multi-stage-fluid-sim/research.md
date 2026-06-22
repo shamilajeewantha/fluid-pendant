@@ -487,6 +487,13 @@ but that directly compensates for our coarser, fixed grid.
 
 ### Decision 13 — Continuous brightness from `particleDensity`, superseding Round 4's binary hysteresis
 
+> **Superseded by Round 7's Decision 15** (below): the real STM32 charlieplex hardware turns out
+> not to support per-LED PWM after all (confirmed against this project's own
+> `sample-charlieplexing` reference driver), so the simulators were reverted to binary on/off —
+> via the restored Decision 12 hysteresis, not a plain binary flag — to keep previewing what the
+> real hardware can actually do. Left here for the reasoning trail (the research against real
+> fluid-pendant projects is still valid context); see Decision 15 for what actually shipped.
+
 **Decision**: stop rendering a binary on/off state at all. Render each display cell's brightness
 directly as `clamp(particleDensity[cell] / particleRestDensity, 0, 1)` — a continuous 0.0–1.0
 value, already exactly the data Round 4 normalized for its thresholds, just used directly instead
@@ -622,6 +629,59 @@ remains appropriate now that the top is genuinely open.
   the algorithm this project's `flip_fluid.c`/`flip.js` already port — confirms the original design
   is walled on all four sides, explaining why this off-by-one was never visible there.
 
+## Round 7 — Reverting to binary display: real charlieplex hardware has no PWM (2026-06-22)
+
+The user realized, after Round 5 shipped, that the real STM32 charlieplex hardware **cannot**
+actually do per-LED PWM/brightness — confirmed against this project's own existing reference
+driver, `stm_projects/sample-charlieplexing/Core/Src/main.c`: its scan buffers
+(`bsrr_buf[240]`/`moder_buf[240]`) hold exactly **one** on/off pattern per LED slot, driven once
+per DMA-cycled scan pass. Decision 13's forward-compatibility note (cheap bit-angle-modulation PWM
+"in the existing DMA-driven charlieplex scan") assumed that scan could cycle through *several*
+such buffers per displayed frame — true in principle, but that would mean enlarging these fixed
+240-entry buffers into multiple bit-plane buffers and restructuring the timing loop, which is
+exactly the kind of added complexity this project has consistently been asked to avoid on the
+STM32L4. The user's call: keep it simple, binary on/off, matching what the real driver can
+actually do today.
+
+### Decision 15 — Revert Decision 13; restore Decision 12's hysteresis (not plain binary `cellType`)
+
+**Decision**: cells go back to a binary on/off `cellColor`, but **not** by reverting to the
+original raw `g_cellType == FLUID_CELL` check Decision 12 first replaced. That binary signal is a
+step function with all its sensitivity concentrated at one exact cell-boundary point — reinstating
+it would bring back exactly the surface flicker Round 4 fixed. Instead, restore Decision 12's
+hysteresis-on-density approach (two thresholds, `LED_ON_THRESHOLD`/`LED_OFF_THRESHOLD`, with a dead
+zone between them, applied to the same already-computed `particleDensity`/`particleRestDensity`
+Decision 13 used for brightness) — the output is binary again, but the decision of *when* to flip
+is still based on the smooth, continuous density signal, so sub-cell particle jitter still can't
+flip an LED every frame. This is the same code this project already wrote, tested, and verified
+once before (Round 4) — being reinstated, not redesigned.
+
+**Why not just revert to Decision 12's exact old code wholesale**: the underlying `cellColor`
+buffers, function signatures, and surrounding code (e.g. `util.c`'s `grid[][]` brightness scaling,
+Round 6's clamp fix) have moved on since Decision 12 was first written and then removed in Round 5.
+The hysteresis *logic* is restored verbatim (same two thresholds, same dead-zone behavior, same
+persisted per-cell state array); the surrounding plumbing (`grid[][]` in `util.c`, `cellColor` in
+both files) is adapted to emit a clean 0/1 (not 0-255 brightness) again.
+
+**Why this is still STM32L4-appropriate / no complex calculations**: identical cost to Decision 12
+the first time it shipped — one persisted 240-cell array, two threshold comparisons per cell per
+frame, no new physics, no per-LED PWM logic needed on the real driver (matching what it can
+actually do).
+
+**Alternatives considered**:
+- *Keep continuous brightness in the Stage 1/2 simulators "for looks," accept it just won't match
+  Stage 3's real binary hardware*: rejected by the user — the simulators exist specifically to
+  preview real hardware behavior before flashing it (spec User Story 2's whole purpose), so showing
+  a richer effect the real device can't reproduce would make the simulators actively misleading.
+- *Revert straight to the original raw `cellType` binary check*: rejected — silently reintroduces
+  the Round 4 flicker bug with no benefit, since the hysteresis fix costs nothing extra.
+
+### Sources
+
+- `stm_projects/sample-charlieplexing/Core/Src/main.c` (`bsrr_buf[240]`/`moder_buf[240]`) — this
+  project's own existing charlieplex driver reference, confirming the single-buffer-per-scan
+  structure that makes per-LED PWM nontrivial to add.
+
 ## Summary of resolved unknowns
 
 | Unknown | Resolution |
@@ -637,6 +697,7 @@ remains appropriate now that the top is genuinely open.
 | Missing cell separators/row-col labels, oversized Stage 2 window | Rendering-only fixes (`CELL_SIZE`, border-drawing, static text labels) — zero change to simulation-space scale |
 | Stage 1 start/pause was keyboard-only | Added visible Start/Pause buttons matching Stage 2's UI pattern |
 | Stage 2 played back in slow motion (~42% real speed) vs. Stage 1's near-real-time | `scene.dt` changed to match Stage 2's actual 20ms tick interval, at the same 50Hz tick rate (no added compute) |
-| Surface LEDs flicker at rest | Hysteresis threshold on the already-computed `particleDensity`/`particleRestDensity` (Decision 12) — **superseded by Decision 13** |
-| Display looks unrealistic / too binary for a fixed 16x15 grid | Render continuous brightness directly from `particleDensity`/`particleRestDensity` (clamped 0-1), no on/off decision at all — researched against real fluid-pendant projects (mitxela's pendant, the FLIP business card); forward-compatible with cheap bit-angle-modulation PWM on real hardware |
+| Surface LEDs flicker at rest | Hysteresis threshold on the already-computed `particleDensity`/`particleRestDensity` (Decision 12) — reinstated by Decision 15 after a brief detour through Decision 13 |
+| Display looks unrealistic / too binary for a fixed 16x15 grid | Render continuous brightness directly from `particleDensity`/`particleRestDensity` (clamped 0-1) — **superseded by Decision 15**: real charlieplex hardware has no per-LED PWM, so this was reverted |
 | Top display row (row 1) never lights up | Off-by-one in the density-splat/velocity-transfer upper-neighbor clamp excluded grid index `fNumY-1` entirely (harmless in the original all-walls-closed tutorial design, exposed once Decision 7 opened the top wall); fixed by correcting the clamp to reach the true last index (Decision 14) |
+| Real charlieplex hardware has no per-LED PWM | Reverted Decision 13's continuous brightness; restored Decision 12's hysteresis-on-density binary output (Decision 15) — same flicker-free behavior, matches real hardware capability |

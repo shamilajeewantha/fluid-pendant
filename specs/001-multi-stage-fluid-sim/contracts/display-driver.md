@@ -5,13 +5,11 @@
 
 ## Contract
 
-- Input: one `DisplayFrame` (16 × 15 cells, each a continuous 0.0–1.0 brightness value per
-  data-model.md / research.md Decision 13 — not binary) per refresh cycle.
-- SHOULD render brightness via **bit-angle modulation (BAM)**: precompute a small number (e.g.
-  4–8) of binary on/off scan buffers per logical frame, one bit-plane each, and let the existing
-  TIM+DMA scan cycle through them — this stays entirely within the zero-CPU-polling, DMA-driven
-  scan architecture below (no new per-LED PWM timer, no per-LED division/multiplication in the hot
-  path; each bit-plane buffer is built with one bit-test per cell, once per logical frame).
+- Input: one `DisplayFrame` (16 × 15 binary cells per data-model.md / research.md Decision 15 —
+  reverted from a brief continuous-brightness detour, Decision 13, once it was confirmed the real
+  charlieplex hardware has no per-LED PWM) per refresh cycle. Matches
+  `sample-charlieplexing`'s existing `bsrr_buf[240]`/`moder_buf[240]` structure directly: one
+  on/off pattern per LED slot, no bit-plane buffers needed.
 - Owns the `LedMatrixAddressing` lookup table — translates each `DisplayFrame` cell into the
   (drive-high pin, drive-low pin, Hi-Z others) pattern for that scan step. This table MUST live
   entirely inside this module; no other module may reference physical pin numbers for the display.

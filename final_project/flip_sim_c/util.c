@@ -32,14 +32,13 @@ void UpdateGridFromFluid(Scene* scene) {
     // padded larger than this — research.md Decision 7 — but that padding is invisible
     // here). "Up" in the tank (high simulation row, the open top) is drawn at the top of
     // the screen, so display row i maps to solver row (GRID_Y - 1 - i); columns map directly.
-    // grid[][] holds a 0-255 brightness level (research.md Decision 13) rather than a
-    // binary flag — cellColor is already a continuous 0.0-1.0 value, just scaled for the
-    // RGB() green channel DrawGrid uses below.
+    // grid[][] holds a binary 0/1 flag (research.md Decision 15 — real charlieplex hardware
+    // has no per-LED PWM, so the brief Decision 13 brightness scaling was reverted).
     for (int i = 0; i < GRID_Y; i++) {
         int simRow = GRID_Y - 1 - i;
         for (int j = 0; j < GRID_X; j++) {
             float g = scene->fluid->cellColor[simRow * GRID_X + j];
-            grid[i][j] = (int)(g * 255.0f);
+            grid[i][j] = (g > 0.01f) ? 1 : 0;
         }
     }
 }
@@ -95,7 +94,7 @@ void DrawGrid(HDC hdc) {
     HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
     for (int i = 0; i < GRID_Y; i++) {
         for (int j = 0; j < GRID_X; j++) {
-            HBRUSH hBrush = CreateSolidBrush(RGB(0, grid[i][j], 0)); // grid[i][j] is a 0-255 brightness level (research.md Decision 13).
+            HBRUSH hBrush = CreateSolidBrush(grid[i][j] ? RGB(0, 255, 0) : RGB(0, 0, 0)); // If grid[i][j] is 1, the brush color will be green (RGB(0, 255, 0)).
             HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
             // GRID_LEFT/GRID_TOP shift the grid right/down to leave room for DrawGridLabels' margins.
             RECT rect = { GRID_LEFT + j * CELL_SIZE, GRID_TOP + i * CELL_SIZE,

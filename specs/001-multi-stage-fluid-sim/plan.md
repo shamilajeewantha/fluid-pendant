@@ -91,6 +91,17 @@ free/open top surface). A separately reported leftmost-column motion at rest was
 code asymmetry found between left/right walls) and the user explicitly accepted it as genuine,
 realistic settling motion rather than asking for a fix.
 
+**Round 7 (2026-06-22, real hardware has no per-LED PWM — revert to binary display)**: the user
+realized the real charlieplex hardware can't actually do per-LED brightness, confirmed against
+this project's own `sample-charlieplexing` reference driver (`bsrr_buf[240]`/`moder_buf[240]` hold
+exactly one on/off pattern per scan, not multiple brightness bit-planes) — Round 5's
+forward-compatibility assumption (bit-angle-modulation PWM) would need restructuring that fixed,
+single-buffer scan, which is more complexity than the user wants on the STM32L4 (research.md
+Decision 15). Reverted Round 5's continuous brightness, but specifically by **reinstating** Round
+4's hysteresis-on-density logic (not the original raw binary `cellType` flag) — same persisted
+state and two threshold comparisons as before, so the binary output stays flicker-free without
+costing anything new.
+
 ## Technical Context
 
 **Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript

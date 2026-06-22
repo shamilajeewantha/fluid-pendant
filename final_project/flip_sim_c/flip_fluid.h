@@ -14,6 +14,15 @@
 #define PAD_FNUM_X (GRID_X + 2)
 #define PAD_FNUM_Y (GRID_Y + 1)
 
+// Hysteresis thresholds (fractions of particleRestDensity) for update_cell_colors_from_types()
+// in flip_fluid.c — research.md Decision 12, reinstated by Decision 15 (real charlieplex
+// hardware has no per-LED PWM, so the display is binary again). A cell turns on once density
+// climbs above LED_ON_THRESHOLD, and only turns back off once it drops below
+// LED_OFF_THRESHOLD; in between, it holds its last state, so sub-cell particle jitter at rest
+// can't flip an LED every frame.
+#define LED_ON_THRESHOLD 0.5f
+#define LED_OFF_THRESHOLD 0.2f
+
 typedef struct {
     float *particlePos;   // x,y positions
     float *s;             // grid solid/fluid flags

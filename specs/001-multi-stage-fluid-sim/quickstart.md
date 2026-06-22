@@ -49,18 +49,24 @@ pressure iterations causing divergence) before ever touching hardware.
 fluid to fall and settle — it should look like real-time water motion, not slow motion. (Already
 verified headlessly: 3000 steps at the corrected `dt` produced no instability.)
 
-**Round 4 check** (research.md Decision 12, superseded by Round 5 — see below): hold the gravity
-slider still for 10+ seconds after the fluid settles. The LEDs along the air/water boundary should
-hold a stable pattern — no per-frame blinking — while still updating promptly if the slider is
-then moved again.
+**Round 4 check** (research.md Decision 12, reinstated by Round 7 after a Round 5 detour — see
+below): hold the gravity slider still for 10+ seconds after the fluid settles. The LEDs along the
+air/water boundary should hold a stable pattern — no per-frame blinking — while still updating
+promptly if the slider is then moved again.
 
-**Round 5 check** (research.md Decision 13): cells should now show a visible brightness gradient
-at the fluid surface (dimmer near the edge of the water, brighter toward the interior) instead of
-a hard black/green line — the boundary should look like a graded edge, not a binary step.
+**Round 5 check** (research.md Decision 13 — **reverted by Round 7**, kept here only as history):
+this round briefly rendered a continuous brightness gradient at the surface instead of a hard
+black/green line; it was reverted once it was confirmed the real charlieplex hardware can't do
+per-LED PWM. Cells are binary again as of Round 7.
 
 **Round 6 check** (research.md Decision 14): tilt/shake enough to send fluid toward the top of the
 tank — the topmost display row ("row 1") should now be able to light up like any other row, rather
 than staying permanently black regardless of how the fluid moves.
+
+**Round 7 check** (research.md Decision 15): cells should be back to a hard on/off appearance
+(matching the real hardware's binary charlieplex capability), and the Round 4 check above (no
+per-frame blinking at rest) should still hold — confirming the hysteresis-on-density binary output
+didn't bring back the original flicker.
 
 **Round 2 checks** (research.md Decisions 7, 9):
 - Cell separator lines are visible between cells, and row/column index labels are visible.
