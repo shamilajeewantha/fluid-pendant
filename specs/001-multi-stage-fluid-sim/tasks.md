@@ -10,12 +10,15 @@ description: "Task list for Multi-Stage Fluid Simulation Pendant"
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md (all present)
 
 **Scope of this task list**: Stage 1 (browser prototype) and Stage 2 (Windows simulator), **plus
-Stage 3 Round 8** — two narrow, explicitly-scoped pieces of firmware bring-up in
-`stm_projects/axelor` (accel telemetry print, and a periodically-refreshing placeholder display
-pattern decoupled from the DMA scan; research.md Decisions 16–17). Physics-core integration (the
-rest of Stage 3 — porting `flip_fluid.c`/etc., a real `DisplayFrame` producer, the
-slot→(row,col) mapping) remains deferred; those tasks are listed in the **Deferred** section at
-the end of this file for re-scoping later, but are NOT part of this execution pass.
+Stage 3 Rounds 8–9** — firmware bring-up and now physics-core integration in `stm_projects/axelor`
+(accel telemetry print, a periodically-refreshing placeholder display pattern decoupled from the
+DMA scan, and — Round 9 — the real ported `flip_fluid`/`flip_utils`/`scene` simulation actually
+driving the LED matrix from accelerometer input; research.md Decisions 16–24). What remains
+deferred after Round 9 is narrower than before: interrupt-driven/Low-Power-Accelerometer-Mode
+sensor reading and `STOP`-mode power management — listed in the **Deferred** section at the end of
+this file, NOT part of this execution pass. (The column-level (left/right) `LedMatrixAddressing`
+mapping question raised at the end of Round 9 turned out, per Round 10, to be a physical wiring
+defect rather than a firmware gap — see the Round 10 notes near T100 and in the Deferred section.)
 
 **Canonical source location**: `final_project/flip_sim_js/` and `final_project/flip_sim_c/`. The
 byte-identical duplicates at the repo root (`flip_sim_js/`, `flip_sim_c/`) are intentionally left
@@ -34,7 +37,9 @@ validation instead uses the manual scenarios already defined in `quickstart.md`.
 
 **Organization**: Tasks are grouped by user story (US1 = browser prototype, US2 = Windows
 simulator, US3 = motion-reactive pendant) per spec.md's priorities (P1, P2, P3). Round 8's tasks
-are filed under US3 as preliminary bring-up steps toward that story — they do not complete it.
+are filed under US3 as preliminary bring-up steps toward that story; Round 9's tasks (Phases
+15–17) are also filed under US3 and are the first tasks that substantively deliver that story —
+real simulation, driven by real accelerometer input, actually driving the LED matrix.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -704,21 +709,220 @@ is confirmed intact.
 
 ---
 
-## Deferred — Stage 3 (Firmware) physics-core integration, NOT part of this execution pass
+### Phase 15: User Story 3 — Round 9a: Port the physics core onto `axelor`
 
-Round 8 (Phases 12–14 above) already covers accel telemetry and a placeholder display pattern in
-`stm_projects/axelor`. What remains deferred is everything that requires the actual physics core.
-The task breakdown below reflects the Stage 3 design already captured in research.md/data-model.md/
-contracts/, kept here only so that future phase has a ready starting point to re-scope (e.g. the
-file paths and the "new project" assumption should be re-checked against whatever the user has
-actually set up by then — `axelor` already exists and is not a new project, unlike the original
-forward-reference design below assumed) — **do not execute these now**.
+**Goal**: Get `flip_fluid`/`flip_utils`/`scene` compiling as part of `axelor`'s build, with no
+behavior change to the simulation algorithm itself — only the allocation strategy and one stray
+math-library call change, per research.md Decisions 18–20.
 
-- Create the new STM32CubeIDE project (cloned from `stm_projects/axelor`) with `Core/Src/physics/`, `Core/Src/display/`, `Core/Src/sensor/` subdirectories
-- Copy `flip_fluid.c`/`.h`, `flip_utils.c`/`.h`, `scene.c`/`.h` verbatim (no STM32 HAL includes) from `final_project/flip_sim_c/` into the new project's `Core/Src/physics/` / `Core/Inc/physics/`, per `contracts/physics-core.md`
-- Implement the 16-pin charlieplex addressing lookup table and the TIM+DMA GPIO `BSRR`/`MODER` scan driver in `Core/Src/display/charlieplex_driver.c`, adapted from `stm_projects/sample-charlieplexing` (research.md Decision 4, `contracts/display-driver.md`)
-- Implement MPU-6500 register init (Low-Power Accelerometer Mode, gyro disabled, ±2g full-scale, Data Ready interrupt) and the interrupt-driven SPI1 read + dead-band filter in `Core/Src/sensor/mpu6500_driver.c`, per `contracts/sensor-driver.md` and research.md Decision 5
-- Implement `main.c` glue: read `MotionInput` → write `Scene.gravity_x/y` → `simulateFlipFluid` → build `DisplayFrame` → hand off to the display driver; add `STOP`-mode power management between ticks (constitution Principle II)
-- Build in STM32CubeIDE and confirm Flash/RAM usage ≤ 80% of 256 KB / 64 KB (constitution Principle IV)
-- On-hardware validation per `quickstart.md` Stage 3 scenarios (neutral boot pattern, tilt latency < 0.5s, settles when still, ≥10 min untethered operation) and supply-current measurement against the MPU-6500's documented power model (`contracts/sensor-driver.md`)
-- Grep the copied physics files for any STM32 HAL include/register reference and confirm none exist (constitution Principle III)
+**Independent test**: Build `stm_projects/axelor` and confirm it compiles with zero new
+warnings/errors with the new files included, even before anything in `main.c` calls into them.
+
+**All file paths below are under `stm_projects/axelor/` only.**
+
+- [x] T088 [US3] Copy `flip_fluid.c`/`.h`, `flip_utils.c`/`.h`, `scene.c`/`.h` from
+  `Core/Src/flip_sim_c/` into `Core/Src/` (`.c` files) and `Core/Inc/` (`.h` files), matching
+  `axelor`'s existing flat `Core/Src`+`Core/Inc` layout. Do **not** copy `main.c`, `util.c`/`.h`,
+  `Dockerfile`, `.dockerignore`, `Makefile`, `README.md`, or `main.exe` — confirmed Win32-only/
+  non-firmware (research.md Decision 18). — *done; the `flip_sim_c/` reference copy itself was
+  left in place (excluded from the build via `.cproject`'s new `excluding="Src/flip_sim_c"`
+  attribute, see T092) as a historical record of the pre-conversion source.*
+- [x] T089 [US3] In `Core/Src/flip_fluid.c`, replace every `malloc`/`calloc`/`free` (`g_u`, `g_v`,
+  `g_du`, `g_dv`, `g_prevU`, `g_prevV`, `g_p`, `g_particleDensity`, `g_cellType`,
+  `g_numCellParticles`, `g_firstCellParticle`, `g_cellParticleIds`, `g_particleVel`) with `static`
+  fixed-size arrays sized to this tank's fixed maxima (computed from `setupScene()`'s formula:
+  `wantCells`≈`PAD_FNUM_X*PAD_FNUM_Y`=289, `pNumCells`≈289, `maxParticles`≈323); delete the
+  re-allocate-if-bigger logic in `ensure_grid_alloc`/`ensure_alloc_particle_vel` since size never
+  changes after the one `setupScene()` call (research.md Decision 19). — *done; exact sizes
+  confirmed by hand-computing `setupScene()`'s fixed formula: `FF_GRID_CELLS`=17×17=289,
+  `FF_MAX_PARTICLES`=17×19=323 (hex-pack `numX`×`numY`), `FF_HASH_CELLS`=25×25=625 (particle
+  spatial hash `pNumX`×`pNumY`) — added as named macros in `flip_fluid.h`/`flip_fluid.c` rather
+  than bare literals. `ensure_alloc_particle_vel` deleted entirely (and its 2 call sites) since a
+  static array needs no allocate-on-first-use guard.*
+- [x] T090 [US3] In `Core/Src/flip_utils.c`'s `setupScene()`, replace `malloc` for the `FlipFluid`
+  struct itself, `particlePos`, `s`, and `cellColor` with `static` fixed-size arrays sized to the
+  same fixed maxima as T089 (`maxParticles*2`, `PAD_FNUM_X*PAD_FNUM_Y`, `GRID_X*GRID_Y`) (research.md
+  Decision 19, depends on T089 for consistent sizing). — *done; added
+  `g_flipFluidInstance`/`g_particlePosStorage`/`g_sStorage`/`g_cellColorStorage` static storage.*
+- [x] T091 [US3] In `Core/Src/flip_utils.c:39`, change `floor` to `floorf` (research.md Decision 20)
+  — *research.md Decision 20 corrected: the original finding was a false positive from an
+  imprecise grep that matched the word "floor" inside a comment, not a real function call.
+  Re-verified with `grep -n "[^f]floor("` against the as-ported `Core/Src/flip_fluid.c` and
+  `Core/Src/flip_utils.c` — zero matches in either file; every real `floor`-family call already
+  correctly uses `floorf`. No code change was made because none was needed.*
+- [x] T092 [US3] Add the 3 new `.c` files to `axelor`'s CubeIDE build (verify/update `.cproject`'s
+  source list, or re-index in CubeIDE if it doesn't pick up the new `Core/Src/` files
+  automatically). — *the 3 new files needed no explicit listing (`.cproject`'s `sourceEntries`
+  already includes the whole `Core` tree). What DID need a fix: that same whole-tree include
+  would also try to compile the leftover `Core/Src/flip_sim_c/` reference copy — duplicate
+  `flip_fluid`/`flip_utils`/`scene` symbols plus a second, Win32-only `main()` — so added
+  `excluding="Src/flip_sim_c"` to both the Debug and Release `sourceEntries` in `.cproject`.
+  Confirmed via a real headless CubeIDE build (`stm32cubeidec.exe ... headlessbuild`), not just
+  inspection.*
+- [x] T093 [US3] Build `stm_projects/axelor` and confirm zero new warnings/errors; check the linker
+  map / build console for Flash and RAM usage and confirm both are ≤ 80% of 256 KB / 64 KB
+  (constitution Principle IV gate) (depends on T088–T092) — *done via headless CubeIDE build,
+  before main.c was wired up (T094-T097): 0 errors. Found and fixed 4 new `-Waddress` warnings
+  (dead null-checks against the new static arrays, which can never be NULL) in both
+  `Core/Src/flip_fluid.c` and the `flip_sim_c/` reference copy — confirmed 0 errors, 0 warnings
+  after the fix. Release: Flash (text+data) = 24,560/262,144 B ≈ 9.4%; RAM (data+bss) =
+  32,752/65,536 B ≈ 50.0% — both comfortably under the 80% gate (RAM is the one to watch: the
+  FLIP solver's static arrays are the bulk of it, but there's still ~32 KB of headroom).*
+
+**Checkpoint**: The physics core compiles as part of `axelor`'s firmware, with no heap, no
+`double`-promoted math calls, and confirmed within the Flash/RAM budget — but nothing in `main.c`
+calls into it yet.
+
+---
+
+### Phase 16: User Story 3 — Round 9b: Wire the simulation to the accelerometer and the LED matrix
+
+**Goal**: Replace the Round 8 placeholder pattern generator with the real simulation tick — driven
+by the existing accelerometer read, driving the existing validated `cpFrameBuf`→`moder_buf` path —
+with the DMA scanner, validator, and stall watchdog completely unmodified (research.md Decisions
+21–24).
+
+**Independent test**: Flash `stm_projects/axelor`, tilt the board, and confirm the LED matrix's lit
+rows visibly shift toward the tilt direction — the same independent test spec.md's User Story 3
+itself describes, now actually deliverable.
+
+**All file paths below are under `stm_projects/axelor/Core/Src/main.c` only. Depends on Phase 15
+(T088–T093) being done first — nothing here compiles without the ported physics files in place.**
+
+- [x] T094 [US3] In `main.c`, `#include "scene.h"` (which pulls in `flip_fluid.h`); add a static
+  `Scene axelorScene;` and, in `main()`'s boot sequence (after `MPU6500_Init()`, before
+  `ChargePlex_BuildScanTable()`), call `scene_init(&axelorScene);` then `setupScene(&axelorScene);`,
+  then force `axelorScene.paused = false;` — there is no UI on this board to ever un-pause it
+  otherwise (research.md Decision 24). Print a `[SIM] setup complete` UART line (or rely on
+  `setupScene`'s existing `printf`, redirected appropriately) for boot-time visibility. — *done;
+  also `#include "flip_utils.h"` (needed for `setupScene`'s prototype — `scene.h` alone doesn't
+  declare it). **Safety-relevant addition beyond the task's literal wording**: `setupScene()`
+  calls `printf()` once at boot, and this board's `syscalls.c` routes `printf` through a `_write`
+  that calls a `__attribute__((weak))` `__io_putchar` with no definition anywhere in this
+  project — every existing print in this file uses `sprintf`+`HAL_UART_Transmit` instead, so
+  `printf` had never actually been exercised before. Left as-is, the very first `setupScene()`
+  call would have jumped to an unresolved address and HardFaulted the board. Added a real
+  `__io_putchar(int ch)` definition (routes to `HAL_UART_Transmit(&huart1, ...)`) so `printf`
+  works correctly instead of removing the print line — keeps `flip_utils.c` an unmodified,
+  verbatim port per `contracts/physics-core.md`, with the hardware-awareness staying in `main.c`
+  where it belongs.*
+- [x] T095 [US3] Add `#define MAX_GRAVITY_MPS2 19.62f` (spec.md Clarifications Session 2026-06-23;
+  research.md Decision 22 — the MPU-6500's own ±2g full-scale range) near the other `CP_*`
+  constants; in the main loop, clamp `accelX_mps2`/`accelY_mps2` to `[-MAX_GRAVITY_MPS2,
+  +MAX_GRAVITY_MPS2]` before they're used as gravity input (depends on T094). — *done via a small
+  `ClampGravityMps2()` helper. Also promoted `accelX_mps2`/`accelY_mps2`/`accelZ_mps2` from
+  `MPU6500_ReadAccel()`'s locals to file-scope globals (they're computed inside that function,
+  but the clamp/sim-step logic in `main()`'s loop needs to read them after the call returns —
+  they didn't survive past the function's return before).*
+- [x] T096 [US3] Delete `ChargePlex_GeneratePattern()` entirely. In `main()`'s `while(1)` body,
+  replace its call site with: call `simulateFlipFluid(axelorScene.fluid, axelorScene.dt,
+  clampedGravityX, clampedGravityY, axelorScene.flipRatio, axelorScene.numPressureIters,
+  axelorScene.numParticleIters, axelorScene.overRelaxation, axelorScene.compensateDrift,
+  axelorScene.separateParticles)`, then copy `axelorScene.fluid->cellColor[row*GRID_X+col] > 0.5f`
+  into `cpFrameBuf[row][col]` for every `row`/`col`, then call the existing, unmodified
+  `ChargePlex_ApplyFrameBuffer()` (research.md Decision 23). Do **not** modify
+  `ChargePlex_ApplyFrameBuffer()`, `ChargePlex_ValidateScanTable()`, `ChargePlex_BuildScanTable()`,
+  `ChargePlex_ForceSafeState()`, `ChargePlex_CheckAlive()`, `bsrr_buf`, or `moder_template` — this
+  task is upstream-of-the-validator only (depends on T095). — *done exactly as specified;
+  confirmed none of the listed unmodifiable functions/buffers changed.*
+- [x] T097 [US3] Change the main loop's `HAL_Delay(500)` to `HAL_Delay(20)` to match
+  `Scene.dt=0.02f`; add a `static int printTick = 0;` counter, and wrap the existing verbose UART
+  prints (`Counter:`, `[ACCEL] raw=.../mm/s2=...`) in `if ((printTick++ % 25) == 0) { ... }` so they
+  still print roughly every ~500ms instead of flooding UART at the new 20ms tick rate (research.md
+  Decision 21, depends on T096). — *implemented with one deliberate deviation from the literal
+  wording: used a single shared `printTick++` once per loop iteration (alongside `blinkCounter++`)
+  and a read-only `(printTick % 25) == 0` check at each of the 3 print sites (Counter, and the 2
+  inside `MPU6500_ReadAccel`), instead of `printTick++` independently at each site. Three
+  independent post-increments per iteration would advance the counter 3x as fast, firing every
+  ~167ms instead of ~500ms — the opposite of this task's own stated goal. Also moved
+  `MPU6500_ReadAccel()` to the top of the loop (was previously called last) so each tick's
+  freshest accel sample drives that same tick's simulation step, rather than the previous tick's.*
+- [x] T098 [US3] Build `stm_projects/axelor` and confirm zero new warnings/errors (depends on
+  T094–T097) — *done via headless CubeIDE build (after fixing one build error:
+  `setupScene`'s implicit-declaration error, needed the `flip_utils.h` include from T094's note
+  above) — final result: 0 errors, 0 warnings, both Debug and Release configs. Release size:
+  text=24,448 data=112 bss=32,640 (Flash ≈9.4%, RAM ≈50.0% of budget — see T093's note).*
+- [ ] T099 [US3] Manually validate per `quickstart.md`'s Round 9 checks 1–5: boot-time neutral
+  pattern, tilt response direction/latency (spec SC-004), settling when held still, shake stability
+  (no freeze/garbage display, recovers after the shake stops), and no
+  `[CHARLIEPLEX] frame rejected`/`FAULT` lines during normal handling (depends on T098) — *needs
+  your hardware/eyes; not yet confirmed*
+- [ ] T100 [US3] Manually validate per `quickstart.md`'s Round 9 check 6: confirm tilting toward
+  each side moves the lit region toward the correct *row* reliably, and that left/right ordering
+  within a row is correct — the column-mapping gap this check originally flagged
+  (contracts/display-driver.md Round 9 status) turned out to be a physical wiring defect on the
+  board, not a firmware mapping issue; it's been fixed in hardware and confirmed correct via
+  `axelor-test`'s raw row+column calibration sweep (research.md Round 10, Pass 3), so this check
+  should now simply confirm the real simulation behaves the same way on `axelor` (depends on T098)
+  — *needs your hardware/eyes; not yet confirmed*
+
+**Checkpoint**: Round 9 complete — the real ported FLIP simulation, driven by the board's own
+accelerometer, drives the LED matrix through the exact same validate-or-reject frame-buffer
+boundary the Round 8 placeholder pattern used; row-level tilt response is verified on hardware,
+and the column-level ordering question is resolved (wiring fix, not firmware) pending final
+confirmation on the real simulation in T100.
+
+---
+
+### Phase 17: Polish — Round 9
+
+- [x] T101 Confirm `blinkCounter`'s increment/print, both `MPU6500_ReadWhoAmI()`/`MPU6500_Init()`
+  startup calls, the `BUILD MARKER` line, and the existing raw/mg accel print are all still present
+  and unmodified in `stm_projects/axelor/Core/Src/main.c` after Round 9's edits — same standing
+  check as T087, repeated for this round's changes (depends on T099, T100). — *confirmed via grep:
+  all 4 items present (`blinkCounter` at lines 56/551, `BUILD MARKER` at 462, `MPU6500_ReadWhoAmI`/
+  `MPU6500_Init` calls at 466-467, `[ACCEL] raw=...` print still inside `MPU6500_ReadAccel`).
+  `MPU6500_ReadAccel()`'s call site moved (top of loop instead of bottom, T097) and its prints are
+  now throttled (still present, just gated), but nothing was deleted. This check doesn't strictly
+  need T099/T100's on-hardware confirmation — it's a source-level check, done ahead of those.*
+- [x] T102 [P] Update `contracts/physics-core.md`, `contracts/sensor-driver.md`,
+  `contracts/display-driver.md`'s Round 9 status sections (already drafted during planning) against
+  the actual as-built code from T088–T097, correcting anything that drifted between plan and
+  implementation (depends on T098). — *done. `physics-core.md`: corrected the retracted
+  floor→floorf claim, added the actual array-size constants, documented the `__io_putchar`
+  fix and final build numbers. `sensor-driver.md`: documented the accel-globals promotion, the
+  loop reordering (read-before-sim), and the print throttling. `display-driver.md`: confirmed
+  no drift — added a short as-built confirmation rather than rewriting since the planned
+  description already matched exactly.*
+
+**Checkpoint**: Round 9 fully verified — real simulation drives the display from real accelerometer
+input, every pre-existing safety mechanism and prior-round functionality confirmed intact, and the
+contracts accurately describe the as-built state.
+
+---
+
+## Deferred — Stage 3 (Firmware) remaining work, NOT part of this execution pass
+
+Rounds 8–9 (Phases 12–17 above) now cover accel telemetry, a real ported physics core, and the
+simulation actually driving the LED matrix from accelerometer input in `stm_projects/axelor` — the
+bulk of what this section originally deferred. The original forward-reference design (a *new*
+CubeIDE project with `Core/Src/physics/`/`display/`/`sensor/` subdirectories) never matched
+`axelor`'s actual flat structure and is now fully superseded — `axelor` is the one project, and the
+ported physics files live directly under its `Core/Src/`/`Core/Inc/` per Phase 15. What genuinely
+remains deferred:
+
+- Rework `MPU6500_ReadAccel()`'s polled SPI read into an interrupt-driven read off the MPU-6500's
+  Data Ready pin, with the part configured into Low-Power Accelerometer Mode
+  (`PWR_MGMT_1.CYCLE=1`, gyro axes disabled) instead of the current always-on polled mode
+  (constitution Principle II/Hardware Constraints; `contracts/sensor-driver.md`'s standing Round
+  8/9 status gap; logged with justification in `plan.md`'s Complexity Tracking table for why this
+  was deferred again through Round 9)
+- Add dead-banding/low-pass filtering of the accelerometer reading before it reaches the
+  simulation (data-model.md `MotionInput` validation rule — the Round 9 magnitude clamp is not a
+  substitute for this) and a missing-sample hold-last-value fallback (spec FR-011, currently
+  unimplemented — there is no SPI failure detection at all yet)
+- Add `STOP`/`STANDBY` sleep-mode entry between ticks (constitution Principle II) — interacts with
+  the TIM1/DMA scan and the 1ms `SysTick`-driven stall watchdog in ways that need their own
+  dedicated, carefully-verified round, per `plan.md`'s Complexity Tracking justification for
+  deferring it again through Round 9
+- ~~Confirm the column-level (left/right) `LedMatrixAddressing` mapping against the physical
+  board~~ — resolved in Round 10 (`contracts/display-driver.md`'s Round 10 status, research.md
+  Round 10 Pass 3): the apparent scrambling was a physical wiring defect on the board, not a
+  firmware mapping gap. The user fixed the wiring; `axelor-test`'s raw row+column calibration
+  sweep then confirmed rows go top-to-bottom and columns go left-to-right with no transform
+  needed. No firmware change required — `axelor`'s `cellColor`→`cpFrameBuf` copy stays the direct,
+  untransformed mapping. Final on-hardware confirmation against the real simulation is T100.
+- Supply-current measurement against the MPU-6500's documented power model
+  (`6.9 + ODR × 0.376` µA) — meaningless to measure until the Low-Power Accelerometer Mode rework
+  above actually exists; measuring the current polled-mode draw would not validate anything this
+  contract requires

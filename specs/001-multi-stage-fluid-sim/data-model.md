@@ -13,10 +13,10 @@ shape; only field *types* and the default tuning values they're initialized with
 |---|---|---|
 | `particlePos` | `float*` (x,y pairs) | unchanged |
 | `s` | `float*` | per-cell solid/fluid flag, unchanged |
-| `numParticles` / `maxParticles` | `int` | resized per research.md Decision 3 to fill the 16x15 domain |
-| `fNumX`, `fNumY` | `int` | set to 16 and 15 respectively (or 15/16 depending on solver's row/col convention — verified during implementation against `update_cell_colors_from_types`) |
+| `numParticles` / `maxParticles` | `int` | resized per research.md Decision 3 to fill the 16x15 domain — confirmed Round 9: `setupScene()`'s formula yields `maxParticles≈323` for this tank's fixed parameters |
+| `fNumX`, `fNumY` | `int` | **confirmed Round 9** (not 16/15 directly): the *solver's* padded internal grid is `PAD_FNUM_X=17` × `PAD_FNUM_Y=17`; the *display* grid (`GRID_X=15` columns × `GRID_Y=16` rows) is one cell smaller on the walled sides per research.md Decision 7 — `update_cell_colors_from_types()` crops the padded grid down to the display grid when producing `cellColor` |
 | `density`, `tankWidth`, `tankHeight`, `h`, `r` | `float` | unchanged formulas, recomputed for the new tank size |
-| `cellColor` | `float*`, sized `16*15` | was hardcoded to `10*10`; becomes the source for DisplayFrame |
+| `cellColor` | `float*`, sized `GRID_X*GRID_Y` (15×16=240) | row-major, `index = row*GRID_X + col` (confirmed Round 9 by reading `update_cell_colors_from_types`) — directly matches `AxelorFrameBuffer.cpFrameBuf[row][col]`'s shape with no remapping (research.md Decision 23) |
 | `Scene.gravity_x` / `gravity_y` | `float` | **changed from `double`** per research.md Decision 2 |
 | `Scene.numPressureIters` | `int` | default lowered from 100 (research.md Decision 1), tunable on hardware |
 
@@ -25,6 +25,12 @@ shape; only field *types* and the default tuning values they're initialized with
 - Grid cells flagged solid (`s[i] == 0`) are never written by the pressure solver (existing rule).
 - `flipRatio`, `overRelaxation`, `numParticleIters`/`numPressureIters` stay within the ranges
   already exposed by the existing JS/C scene defaults (no new bounds introduced).
+- **Round 9 (axelor only)**: all dynamic allocation (`malloc`/`calloc` in `flip_fluid.c`/
+  `flip_utils.c`) is replaced with fixed-size `static` arrays sized to this tank's fixed
+  `maxParticles`/grid dimensions (research.md Decision 19) — this project has exactly one tank
+  configuration, so nothing requires runtime-variable sizing, and removing the heap removes an
+  entire class of embedded-specific risk (allocation failure, fragmentation) this project has no
+  use for.
 
 ## MotionInput
 
@@ -37,12 +43,22 @@ A directional force value driving the simulation's gravity, sourced from either 
 | `y` | `float` | maps to `Scene.gravity_y` |
 
 **Validation rules**:
-- Magnitude clamped to a maximum (prevents a violent shake from injecting an unbounded force into
-  `integrate_particles`, per spec edge case "extreme acceleration spike").
+- Magnitude clamped to a maximum of **19.62 m/s²** (the MPU-6500's own ±2g full-scale range,
+  confirmed via spec.md Clarifications Session 2026-06-23) — prevents a violent shake from
+  injecting an unbounded force into `integrate_particles`, per spec edge case "extreme acceleration
+  spike". **Implemented Round 9** in `axelor`'s glue code (research.md Decision 22) —
+  `accelX_mps2`/`accelY_mps2` are clamped before being passed as `simulateFlipFluid`'s
+  `gravity_x`/`gravity_y`, since the physics core
+  itself (`integrate_particles`) must stay an unmodified, verbatim port (`contracts/physics-core.md`).
 - On Stage 3, dead-banded/low-pass filtered before being written (per research.md Decision 5) so
-  single noisy samples don't visibly perturb the fluid.
+  single noisy samples don't visibly perturb the fluid. **Still not implemented as of Round 9** —
+  same open gap `contracts/sensor-driver.md`'s Round 8 status already logged; the magnitude clamp
+  above is the minimum needed to satisfy the shake-stability edge case today, not a substitute for
+  this filtering.
 - On missing/invalid sensor input, the last valid `MotionInput` is held rather than zeroed or
-  treated as undefined (per spec edge case "accelerometer briefly fails").
+  treated as undefined (per spec edge case "accelerometer briefly fails"). **Not yet implemented**
+  — the current polled read has no failure-detection path at all (no SPI error handling beyond the
+  status print); still open work alongside the interrupt-driven sensor contract.
 
 ## DisplayFrame
 
@@ -95,29 +111,35 @@ or written into any `Scene` field — purely observational at this stage.
 - Read-only with respect to simulation state: this round writes no `Scene`/`FlipFluid` field from
   any of these values (NO SIM INTEGRATION, per explicit user instruction).
 
-## AxelorFrameBuffer (axelor, Round 8 — research.md Decision 17)
+## AxelorFrameBuffer (axelor, Round 8 — research.md Decision 17; producer replaced Round 9 — Decision 23)
 
-The firmware-local stand-in for `DisplayFrame`/`cellColor` until the physics core is ported onto
-this board — same 240-slot indexing as the existing charlieplex `bsrr_buf`/`moder_buf` (one entry
-per `(src,dst)` pin-pair slot, in `ChargePlex_BuildScanTable`'s existing enumeration order), but
-owned by a pattern generator instead of `FluidSimState`, and consumed by a translation step instead
-of being read directly by DMA.
+The firmware-local stand-in for `DisplayFrame`/`cellColor` — shaped as an actual `[16][15]`
+`[row][col]` matrix (revised from the original flat 240-entry shape once the board's real
+row/column wiring convention was confirmed — every PB pin takes a turn as one row's source pin,
+the other 15 as that row's sink pins), matching `FlipFluid.cellColor`'s own row-major shape
+exactly. As of Round 9, this is filled directly from the real ported simulation's output instead of
+a placeholder pattern generator — but the buffer's role in the architecture, and everything
+downstream of it, is unchanged from Round 8.
 
 | Field | Type | Notes |
 |---|---|---|
-| `frameBuf` | fixed-size array, 240 entries, 1 bit each (on/off) | which slots the *current* pattern marks "on"; refilled by the pattern generator, never read by DMA directly |
-| pattern generator state | one persisted integer (sweep offset) | advances by a fixed step each refresh tick, wraps modulo 240 — no floats/trig needed (research.md Decision 17) |
+| `cpFrameBuf` | `uint8_t[16][15]` | which `[row][col]` cells the *current* producer marks "on"; never read by DMA directly |
+| producer (Round 8) | pattern generator, one persisted row index | placeholder: lit exactly one row per ~0.5s tick, advancing/wrapping mod 16 — superseded below |
+| producer (Round 9) | `FlipFluid.cellColor[row*GRID_X+col] > 0.5f` | the real simulation's binary per-cell output (research.md Decision 23), copied in once per ~20ms simulation tick |
 
 **Validation rules**:
-- Refreshed once per ~0.5s tick (reuses the existing main-loop cadence), **decoupled from** the
-  DMA scan's own much faster, unchanged rate.
+- Refreshed once per simulation tick (Round 8: ~0.5s reusing the main-loop cadence; Round 9: ~20ms,
+  matching `Scene.dt` — research.md Decision 21), **decoupled from** the DMA scan's own much
+  faster, unchanged rate.
 - Every refresh is translated into `moder_buf` only (`bsrr_buf` is written once at boot and never
   again, since pin identity per slot never changes — only on/off does) and re-validated by
   `ChargePlex_ValidateScanTable()` (relaxed to accept zero-output "off" slots as valid, alongside
   the existing exactly-2-output "on" slot rule) **before** being allowed to replace the live
   `moder_buf` — a malformed new frame is dropped (previous frame kept) rather than risked, per this
   board's no-current-limiting-resistor constraint already documented in tasks.md/plan.md history.
-- This is the exact slot the eventual `DisplayFrame`/`cellColor` output is expected to fill once the
-  physics core is ported — the pattern generator is a placeholder producer for the same consumer
-  (the `moder_buf` translation step), not a separate mechanism that integration would need to
-  replace.
+  **This validate-or-reject gate, and everything below it, is unchanged by the Round 9 producer
+  swap** — the real simulation is held to the exact same boundary the placeholder pattern generator
+  was, with no new path to influence `moder_buf`/`bsrr_buf`/hardware registers directly.
+- This was the exact slot the `DisplayFrame`/`cellColor` output was expected to fill once the
+  physics core was ported (stated in Round 8) — Round 9 confirms that prediction held with no
+  rework needed to the consumer side; only the producer changed.

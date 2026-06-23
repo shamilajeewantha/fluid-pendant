@@ -210,7 +210,7 @@ void MPU6500_ReadAccel(void)
     long accelY_mg = ((long)accelY_raw * 1000) / 16384;
     long accelZ_mg = ((long)accelZ_raw * 1000) / 16384;
 
-    sprintf(msg, "[ACCEL] raw=[%d %d %d] mg=[%ld %ld %ld]\r\n",
+    sprintf(msg, "[ACCEL] raw=[X=%d Y=%d Z=%d] mg=[X=%ld Y=%ld Z=%ld] (X,Y used by sim; Z ignored)\r\n",
             accelX_raw, accelY_raw, accelZ_raw, accelX_mg, accelY_mg, accelZ_mg);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
@@ -229,7 +229,7 @@ void MPU6500_ReadAccel(void)
     long accelY_mmps2 = (long)(accelY_mps2 * 1000.0f);
     long accelZ_mmps2 = (long)(accelZ_mps2 * 1000.0f);
 
-    sprintf(msg, "[ACCEL] mm/s2=[%ld %ld %ld] (= m/s2 x1000; sim will want this unit/scale)\r\n",
+    sprintf(msg, "[ACCEL] mm/s2=[X=%ld Y=%ld Z=%ld] (=m/s2 x1000; X->gravity_x, Y->gravity_y, Z ignored)\r\n",
             accelX_mmps2, accelY_mmps2, accelZ_mmps2);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 }
@@ -309,30 +309,48 @@ static int ChargePlex_ValidateScanTable(const uint32_t *moderToCheck)
     return 1;
 }
 
-/* Fills cpFrameBuf one full physical row at a time: all CP_COLS (15) LEDs of the current row
-   marked on, every other row off, advancing to the next row each call and wrapping after
-   CP_ROWS (16) (research.md Decision 17 / row-by-row revision). The DMA scanner underneath is
-   completely unaware of this -- it still only ever drives one (src,dst) pin pair at any given
-   instant, exactly as before; marking a whole row "on" here just means the scanner's existing
-   one-at-a-time sweep spends this ~0.5s tick cycling only through that row's 15 slots, so
-   persistence of vision reads it as the row being lit, not 16 pins driven at once. */
+/* Row/column mapping calibration sweep: lights one full RAW (un-rotated, un-corrected) row at
+   a time -- row index 0 first, advancing 0,1,2,...,15 -- then, once all CP_ROWS rows have been
+   shown, switches to lighting one full RAW column at a time -- column index 0 first, advancing
+   0,1,2,...,14 -- then loops back to rows again, forever. Every step prints exactly which raw
+   index it just lit, 1-indexed for easy counting against the physical board ("ROW 1 of 16",
+   "COLUMN 1 of 15", etc). No offset/rotation is applied anywhere in this function -- the whole
+   point is to read the board's true, unmodified row/column wiring order directly off the UART
+   log, the same way the original per-row sweep already revealed the row-8 offset that axelor's
+   real simulation now corrects for. The DMA scanner is completely unaware of any of this -- it
+   still only ever drives one (src,dst) pin pair at any given instant, exactly as before; marking
+   a whole row/column "on" here just means the scanner's existing one-at-a-time sweep spends this
+   ~0.5s tick cycling only through that row's/column's slots, so persistence of vision reads it as
+   the whole row/column being lit. */
 static void ChargePlex_GeneratePattern(void)
 {
-    static int currentRow = 0;
+    static int calibStep = 0; /* 0..CP_ROWS-1 = rows, CP_ROWS..CP_ROWS+CP_COLS-1 = columns */
 
-    for (int row = 0; row < CP_ROWS; row++)
+    memset(cpFrameBuf, 0, sizeof(cpFrameBuf));
+
+    if (calibStep < CP_ROWS)
     {
-        uint8_t on = (row == currentRow) ? 1 : 0;
+        int row = calibStep;
         for (int col = 0; col < CP_COLS; col++)
         {
-            cpFrameBuf[row][col] = on;
+            cpFrameBuf[row][col] = 1;
         }
+        sprintf(msg, "[CHARLIEPLEX] ROW %d of %d lit (raw row index %d, %d LEDs)\r\n",
+                calibStep + 1, CP_ROWS, row, CP_COLS);
     }
-
-    sprintf(msg, "[CHARLIEPLEX] frame: row %d lit (%d LEDs)\r\n", currentRow, CP_COLS);
+    else
+    {
+        int col = calibStep - CP_ROWS;
+        for (int row = 0; row < CP_ROWS; row++)
+        {
+            cpFrameBuf[row][col] = 1;
+        }
+        sprintf(msg, "[CHARLIEPLEX] COLUMN %d of %d lit (raw col index %d, %d LEDs)\r\n",
+                col + 1, CP_COLS, col, CP_ROWS);
+    }
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 
-    currentRow = (currentRow + 1) % CP_ROWS;
+    calibStep = (calibStep + 1) % (CP_ROWS + CP_COLS);
 }
 
 /* Translates cpFrameBuf into a candidate moder_buf (on slots get their immutable

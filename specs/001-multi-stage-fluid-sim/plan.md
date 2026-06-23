@@ -115,6 +115,27 @@ a new, periodically-refreshing (~0.5s) frame buffer — the firmware-local stand
 mechanism itself left completely unchanged. All edits for this round are confined to
 `stm_projects/axelor` per explicit user instruction.
 
+**Round 9 (2026-06-23, real physics core ported onto axelor — Stage 3 physics-core integration
+begins)**: the user copied `final_project/flip_sim_c`'s contents into
+`stm_projects/axelor/Core/Src/flip_sim_c/` and asked for the Round 8 placeholder pattern generator
+to be replaced by the real ported simulation, with the existing accelerometer reading as its
+driving input — the integration this plan's original Structure Decision had deferred. Per
+research.md Decisions 18–24: only the genuinely portable files (`flip_fluid.{c,h}`,
+`flip_utils.{c,h}`, `scene.{c,h}` — confirmed free of `<windows.h>`/HAL includes) are adapted;
+`malloc`/`calloc` become fixed-size `static` arrays (this project has exactly one fixed tank
+configuration, so nothing needs runtime-variable sizing); the one stray `floor` call becomes
+`floorf`; the main loop's period shortens from 500ms to 20ms to match `Scene.dt`, with verbose UART
+prints throttled to every 25th tick instead of slowing the simulation itself; accelerometer
+readings are magnitude-clamped before being passed in as `gravity_x`/`gravity_y` (spec edge case:
+shake stability); and `cellColor`'s already-row-major indexing is copied directly into the existing
+`cpFrameBuf[row][col]`, replacing only `ChargePlex_GeneratePattern()` — `ChargePlex_
+ApplyFrameBuffer()`'s validate-or-reject gate, `ChargePlex_ValidateScanTable()`,
+`ChargePlex_BuildScanTable()`, `bsrr_buf`, `moder_template`, the stall watchdog, and the TIM1/DMA
+setup are all **unmodified** by this round — the real simulation is held to exactly the same
+"plain on/off intent only, validated before it can reach hardware" boundary the placeholder sweep
+already proved out, per this board's standing no-current-limiting-resistor constraint. All edits
+remain confined to `stm_projects/axelor`.
+
 ## Technical Context
 
 **Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript
@@ -240,6 +261,18 @@ pieces both land as additions inside `axelor/Core/Src/main.c` (and its paired `m
 still **not** copied into `axelor` in this round — that remains a later, separate step, and
 `tasks.md` for this round contains no physics-core-integration tasks.
 
+**Round 9 update**: the physics-core integration deferred above has now happened, but the flat
+`axelor/Core/Src/main.c`-plus-`USER CODE`-regions structure from Round 8 is unchanged in shape —
+`flip_fluid.{c,h}`/`flip_utils.{c,h}`/`scene.{c,h}` land as new files directly under
+`axelor/Core/Src/`/`Core/Inc/` (promoted out of the temporary `flip_sim_c/` copy the user made,
+which also contained the Win32-only files this round explicitly does not port — see research.md
+Decision 18), not in a `physics/` subdirectory; CubeIDE project files (`.cproject`) need the new
+source files added to the build. The forward-reference `physics/`/`display/`/`sensor/` subdirectory
+split above remains aspirational, not actual, consistent with Round 8's note.
+
 ## Complexity Tracking
 
-> Not applicable — no Constitution Check violations require justification.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|---|---|---|
+| Sensor reads remain **polled** (`MPU6500_ReadAccel()` called once per main-loop tick), not interrupt-driven via the MPU-6500's Data Ready pin — contradicts constitution Principle II ("Polling loops are PROHIBITED") and the Hardware Constraints section ("gravity input MUST be read via interrupt, not polling") | This round's explicit scope (user request) is "drive the LEDs with the real sim, inputs from the accelerometer" — wiring the *existing*, already-working polled read into the simulation loop. The polled read has been reliable across every prior round; rebuilding it as interrupt-driven is a separable, lower-risk-to-defer concern (`contracts/sensor-driver.md`'s Round 8 status already logged this same gap) that does not block today's ask | Building the full interrupt-driven/Low-Power-Accelerometer-Mode contract *and* the sim integration in the same round multiplies the changes under review at once, on a board with no current-limiting resistors, for a constitution gap that already pre-dates this round and was already disclosed — deferring it keeps this round's diff reviewable against one concern at a time |
+| MCU never enters `STOP`/`STANDBY` between ticks (`HAL_Delay(20)` busy-waits) — contradicts constitution Principle II ("MUST enter the lowest viable sleep mode... whenever the simulation is idle") | Same as above: this is a pre-existing gap (no sleep mode has been used in any round so far, including Round 8's bring-up), not something this round's scope introduces or worsens | Introducing low-power sleep-mode entry/wake interacts with the TIM1/DMA scan and the 1ms `SysTick`-driven stall watchdog in ways that need their own dedicated, carefully-verified round — bundling it into this round's already-large physics-core port would multiply the surface area for exactly the kind of self-introduced bug this project has twice already needed to find and fix this session |

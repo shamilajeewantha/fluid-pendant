@@ -1,0 +1,11 @@
+../Core/Src/main.c:268:12:ChargePlex_ValidateScanTable	20	static
+../Core/Src/main.c:389:13:ChargePlex_ForceSafeState	0	static
+../Core/Src/main.c:123:6:MPU6500_ReadWhoAmI	40	static
+../Core/Src/main.c:161:6:MPU6500_WriteReg	24	static
+../Core/Src/main.c:171:6:MPU6500_ReadRegs	40	static
+../Core/Src/main.c:185:6:MPU6500_Init	8	static
+../Core/Src/main.c:200:6:MPU6500_ReadAccel	40	static
+../Core/Src/main.c:406:6:ChargePlex_CheckAlive	24	static
+../Core/Src/main.c:530:6:SystemClock_Config	96	static,ignoring_inline_asm
+../Core/Src/main.c:431:5:main	136	static,ignoring_inline_asm
+../Core/Src/main.c:811:6:Error_Handler	0	static,ignoring_inline_asm

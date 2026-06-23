@@ -78,8 +78,8 @@ didn't bring back the original flicker.
 ## Stage 3 — Firmware on the axelor board (STM32L431CC)
 
 > Round 8 (2026-06-22) began this stage, narrowly scoped to the two checks below — see plan.md's
-> Structure Decision. Physics-core integration (the rest of this section, below the Round 8
-> checks) remains a separate, later phase not yet started.
+> Structure Decision. Round 9 (2026-06-23) ported the physics core itself and wired it to both the
+> accelerometer and the LED matrix (research.md Decisions 18–24) — see the Round 9 checks below.
 
 **Prerequisites**: STM32CubeIDE, the axelor board wired to its MPU-6500 (SPI, accelerometer axes
 only) and the 16-pin charlieplexed LED matrix, ST-Link or equivalent programmer/debugger.
@@ -104,16 +104,43 @@ README/CubeIDE project, then watch the UART at 115200 baud):
    meaningful (no confirmed slot→(row,col) mapping) — that it sweeps smoothly and covers the whole
    matrix over time is the thing being validated here, not its shape.
 
-**Remaining Stage 3 work (not part of Round 8, prerequisites for the checks below)**: port
-`flip_fluid.c`/`flip_utils.c`/`scene.c` onto `axelor`, replace the Round 8 placeholder pattern
-generator with a real `DisplayFrame` producer from `cellColor`, and resolve the
-`LedMatrixAddressing` slot→(row,col) mapping (contracts/display-driver.md Round 8 status) so that
-mapping is geometrically meaningful.
+**Round 9 checks** (research.md Decisions 18–24; the physics-core port — build/flash
+`stm_projects/axelor`, watch the UART at 115200 baud, now throttled to print roughly every 25th
+20ms tick instead of every tick):
+
+1. **Boot-time neutral pattern**: before the simulation has run any ticks (or while resting flat),
+   confirm the matrix shows a defined resting pattern, not garbage — spec edge case "brief period
+   after power-on before the first accelerometer reading."
+2. **Tilt response (Decision 22, spec SC-004)**: tilt the board in each of the four in-plane
+   directions and confirm the lit rows visibly shift toward that tilt direction within well under
+   half a second — cross-check the direction against the already-verified `[ACCEL] mm/s2=...` sign
+   convention from Round 8's check 1.
+3. **Settling (spec User Story 3, acceptance scenario 2)**: hold the board still for 10+ seconds
+   after tilting and confirm the lit pattern settles into a stable shape rather than oscillating or
+   flickering indefinitely (the existing hysteresis threshold, research.md Decision 12/15, should
+   carry over unchanged since `update_cell_colors_from_types` itself wasn't modified).
+4. **Shake stability (spec edge case, research.md Decision 22)**: shake the board hard and confirm
+   the display does not freeze, does not go to all-on/all-off garbage, and recovers to tracking
+   tilt normally once the shake stops — this is what the `gravity_x`/`gravity_y` magnitude clamp is
+   specifically there to prevent failing.
+5. **No validator rejections / no watchdog faults during normal operation**: confirm via UART that
+   neither `[CHARLIEPLEX] frame rejected, keeping previous frame` nor `[CHARLIEPLEX] FAULT` lines
+   appear during normal tilt/shake/rest handling — every simulation-produced frame still goes
+   through the same validate-or-reject gate as the Round 8 placeholder pattern did (research.md
+   Decision 23), so either message appearing would indicate the same class of issue it always did,
+   not something new introduced by the sim integration.
+6. **Row-correct, column-unconfirmed**: confirm tilting toward each of the four sides moves the lit
+   region toward the correct *row* (up/down) reliably — left/right column-level correctness within
+   a row is **not yet verified** against the physical board (contracts/display-driver.md's Round 9
+   status: the column-to-pin mapping within a row is still unconfirmed), so it's expected that
+   left/right may look mirrored or scrambled within a row even once up/down tracks correctly; that
+   is a follow-up calibration task, not a regression to chase down now.
 
 ```text
-# In STM32CubeIDE: File > Open Projects from File System... > select the new firmware project
-# (cloned from stm_projects/axelor per plan.md Structure Decision)
-# Build, then Run > Debug (or flash via ST-Link Utility) to the board
+# In STM32CubeIDE: ensure flip_fluid.c/.h, flip_utils.c/.h, scene.c/.h (promoted from the
+# Core/Src/flip_sim_c/ copy, Win32-only files excluded per research.md Decision 18) are added to
+# the project's source list (Project > Properties, or re-index if CubeIDE doesn't pick them up
+# automatically), then Build, then Run > Debug (or flash via ST-Link Utility) to the board
 ```
 
 **Expected outcome** (validates spec User Story 3 and SC-004/SC-005):

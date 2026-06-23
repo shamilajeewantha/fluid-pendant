@@ -23,6 +23,8 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include "scene.h"
+#include "flip_utils.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,6 +104,28 @@ static uint32_t moder_template[CP_SLOT_COUNT];
 static uint8_t cpFrameBuf[CP_ROWS][CP_COLS];
 static uint32_t cpCandidateModer[CP_SLOT_COUNT];
 
+/* Round 9: the real ported FLIP simulation driving cpFrameBuf above, in place of Round 8's
+   placeholder pattern generator (research.md Decisions 21-24). */
+static Scene axelorScene;
+
+/* MPU-6500's own +/-2g full-scale range (spec.md Clarifications Session 2026-06-23;
+   research.md Decision 22) -- clamps accelX_mps2/accelY_mps2 before they reach
+   simulateFlipFluid, so a violent shake can't inject an unbounded force into the solver. */
+#define MAX_GRAVITY_MPS2 19.62f
+
+static inline float ClampGravityMps2(float v)
+{
+    if (v > MAX_GRAVITY_MPS2) return MAX_GRAVITY_MPS2;
+    if (v < -MAX_GRAVITY_MPS2) return -MAX_GRAVITY_MPS2;
+    return v;
+}
+
+/* Shared by the Counter print and MPU6500_ReadAccel's own prints below -- incremented once per
+   ~20ms main-loop iteration so all of them stay throttled to roughly the same ~500ms cadence
+   they printed at before the loop sped up (research.md Decision 21), without each call site
+   incrementing it independently. */
+static uint32_t printTick = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -117,6 +141,18 @@ static void MX_TIM1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* Retargets newlib's printf to huart1. Without this, syscalls.c's _write falls through to a
+   weak, undefined __io_putchar -- harmless as long as nothing calls printf, but flip_utils.c's
+   setupScene() (ported as-is from the canonical physics source, research.md Decision 18) does
+   call printf once at boot, which would otherwise jump to an unresolved address and HardFault
+   the very first time the simulation is set up. */
+int __io_putchar(int ch)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t*)&ch, 1, HAL_MAX_DELAY);
+    return ch;
+}
+
 uint8_t mpuTxData[2];
 uint8_t mpuRxData[2];
 
@@ -196,6 +232,10 @@ void MPU6500_Init(void)
 
 uint8_t accelRaw[6];
 int16_t accelX_raw, accelY_raw, accelZ_raw;
+/* Round 9: promoted from MPU6500_ReadAccel's locals to file scope so main()'s loop can read
+   this tick's value as the simulation's gravity input after this function returns (research.md
+   Decision 16/22). */
+float accelX_mps2, accelY_mps2, accelZ_mps2;
 
 void MPU6500_ReadAccel(void)
 {
@@ -210,28 +250,33 @@ void MPU6500_ReadAccel(void)
     long accelY_mg = ((long)accelY_raw * 1000) / 16384;
     long accelZ_mg = ((long)accelZ_raw * 1000) / 16384;
 
-    sprintf(msg, "[ACCEL] raw=[%d %d %d] mg=[%ld %ld %ld]\r\n",
-            accelX_raw, accelY_raw, accelZ_raw, accelX_mg, accelY_mg, accelZ_mg);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    if ((printTick % 25) == 0)
+    {
+        sprintf(msg, "[ACCEL] raw=[%d %d %d] mg=[%ld %ld %ld]\r\n",
+                accelX_raw, accelY_raw, accelZ_raw, accelX_mg, accelY_mg, accelZ_mg);
+        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
 
-    // m/s^2 -- the exact unit/scale MotionInput.x/y and Scene.gravity_x/y will need once a
-    // simulation exists on this board (research.md Decision 16). This is NOT read by any
-    // simulation code yet -- printed only so the conversion and this board's MPU-6500 axis/sign
-    // orientation can be verified against real tilts before anything consumes it.
-    float accelX_mps2 = (accelX_mg / 1000.0f) * 9.81f;
-    float accelY_mps2 = (accelY_mg / 1000.0f) * 9.81f;
-    float accelZ_mps2 = (accelZ_mg / 1000.0f) * 9.81f;
+    // m/s^2 -- the exact unit/scale MotionInput.x/y and Scene.gravity_x/y need (research.md
+    // Decision 16). Round 9: this now IS read, as the simulation's gravity input (clamped in
+    // main()'s loop before reaching simulateFlipFluid, research.md Decision 22).
+    accelX_mps2 = (accelX_mg / 1000.0f) * 9.81f;
+    accelY_mps2 = (accelY_mg / 1000.0f) * 9.81f;
+    accelZ_mps2 = (accelZ_mg / 1000.0f) * 9.81f;
 
-    // Printed as milli-(m/s^2) integers, same float-in-printf avoidance as the mg line above --
-    // the underlying accel*_mps2 floats are the real value a future Scene.gravity_x/y assignment
-    // would use; only the *display* stays integer-only.
-    long accelX_mmps2 = (long)(accelX_mps2 * 1000.0f);
-    long accelY_mmps2 = (long)(accelY_mps2 * 1000.0f);
-    long accelZ_mmps2 = (long)(accelZ_mps2 * 1000.0f);
+    if ((printTick % 25) == 0)
+    {
+        // Printed as milli-(m/s^2) integers, same float-in-printf avoidance as the mg line above --
+        // the underlying accel*_mps2 floats are the real value driving the simulation; only the
+        // *display* stays integer-only.
+        long accelX_mmps2 = (long)(accelX_mps2 * 1000.0f);
+        long accelY_mmps2 = (long)(accelY_mps2 * 1000.0f);
+        long accelZ_mmps2 = (long)(accelZ_mps2 * 1000.0f);
 
-    sprintf(msg, "[ACCEL] mm/s2=[%ld %ld %ld] (= m/s2 x1000; sim will want this unit/scale)\r\n",
-            accelX_mmps2, accelY_mmps2, accelZ_mmps2);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+        sprintf(msg, "[ACCEL] mm/s2=[%ld %ld %ld] (= m/s2 x1000; sim will want this unit/scale)\r\n",
+                accelX_mmps2, accelY_mmps2, accelZ_mmps2);
+        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
 }
 
 /* Fills bsrr_buf/moder_buf with every one of the 240 ordered (source,sink) pin
@@ -307,32 +352,6 @@ static int ChargePlex_ValidateScanTable(const uint32_t *moderToCheck)
             return 0;
     }
     return 1;
-}
-
-/* Fills cpFrameBuf one full physical row at a time: all CP_COLS (15) LEDs of the current row
-   marked on, every other row off, advancing to the next row each call and wrapping after
-   CP_ROWS (16) (research.md Decision 17 / row-by-row revision). The DMA scanner underneath is
-   completely unaware of this -- it still only ever drives one (src,dst) pin pair at any given
-   instant, exactly as before; marking a whole row "on" here just means the scanner's existing
-   one-at-a-time sweep spends this ~0.5s tick cycling only through that row's 15 slots, so
-   persistence of vision reads it as the row being lit, not 16 pins driven at once. */
-static void ChargePlex_GeneratePattern(void)
-{
-    static int currentRow = 0;
-
-    for (int row = 0; row < CP_ROWS; row++)
-    {
-        uint8_t on = (row == currentRow) ? 1 : 0;
-        for (int col = 0; col < CP_COLS; col++)
-        {
-            cpFrameBuf[row][col] = on;
-        }
-    }
-
-    sprintf(msg, "[CHARLIEPLEX] frame: row %d lit (%d LEDs)\r\n", currentRow, CP_COLS);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-    currentRow = (currentRow + 1) % CP_ROWS;
 }
 
 /* Translates cpFrameBuf into a candidate moder_buf (on slots get their immutable
@@ -447,6 +466,17 @@ int main(void)
   MPU6500_ReadWhoAmI();
   MPU6500_Init();
 
+  /* Round 9: bring up the real ported FLIP simulation before the matrix scan starts, so
+     cpFrameBuf is never read by ChargePlex_ApplyFrameBuffer before it has real sim output to
+     copy (research.md Decision 24). scene_init()/setupScene() are the unmodified, ported
+     functions; paused is forced false only here, in this board-specific glue code -- there is
+     no UI on this board to ever un-pause it otherwise. */
+  scene_init(&axelorScene);
+  setupScene(&axelorScene);
+  axelorScene.paused = false;
+  sprintf(msg, "[SIM] setup complete\r\n");
+  HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
   ChargePlex_BuildScanTable();
   if (!ChargePlex_ValidateScanTable(moder_buf))
   {
@@ -479,6 +509,10 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    /* Read first so this tick's freshest accel sample drives this tick's simulation step
+       below, rather than the previous tick's (research.md Decision 21/22). */
+    MPU6500_ReadAccel();
+
     if (chargePlexFaulted && !chargePlexFaultReported)
     {
         sprintf(msg, "[CHARLIEPLEX] FAULT: scan stalled -- matrix forced to safe input state\r\n");
@@ -487,20 +521,48 @@ int main(void)
     }
     else if (!chargePlexFaulted)
     {
-        /* Reuses this existing ~500ms tick as the pattern-refresh cadence (research.md
-           Decision 17) -- deliberately not a new timer/ISR. Skipped once faulted: TIM1/DMA
-           are already stopped by ChargePlex_ForceSafeState, so there is nothing left to
-           apply a new frame to. */
-        ChargePlex_GeneratePattern();
+        /* Round 9: the real ported simulation replaces Round 8's placeholder pattern
+           generator (research.md Decision 23). Gravity input is this tick's accel reading,
+           magnitude-clamped to the MPU-6500's own +/-2g range (Decision 22) before reaching
+           simulateFlipFluid -- the physics core itself stays an unmodified, verbatim port
+           (contracts/physics-core.md), so the clamp lives here in board-specific glue code.
+           Round 10: on-hardware testing found the board's mounted accelerometer axes are
+           swapped relative to the display's row/col axes -- accelX_mps2 is physically the
+           vertical (row) axis and accelY_mps2 is the horizontal (col) axis, not the other way
+           around as originally assumed. gravity_y drives row motion and gravity_x drives col
+           motion in simulateFlipFluid (see flip_fluid.c's dstY*GRID_X+dstX convention), so the
+           accel axes are swapped here to match. */
+        float clampedGravityX = ClampGravityMps2(accelY_mps2);
+        float clampedGravityY = ClampGravityMps2(accelX_mps2);
+
+        simulateFlipFluid(axelorScene.fluid, axelorScene.dt, clampedGravityX, clampedGravityY,
+                           axelorScene.flipRatio, axelorScene.numPressureIters,
+                           axelorScene.numParticleIters, axelorScene.overRelaxation,
+                           axelorScene.compensateDrift, axelorScene.separateParticles);
+
+        for (int row = 0; row < CP_ROWS; row++)
+        {
+            for (int col = 0; col < CP_COLS; col++)
+            {
+                cpFrameBuf[row][col] = (axelorScene.fluid->cellColor[row * GRID_X + col] > 0.5f) ? 1 : 0;
+            }
+        }
+
+        /* Unmodified from Round 8 -- still the same validate-or-reject gate, applied to the
+           real simulation's output exactly as it was to the placeholder pattern. */
         ChargePlex_ApplyFrameBuffer();
     }
 
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
     blinkCounter++;
-    sprintf(msg, "Counter: %lu\r\n", blinkCounter);
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-    MPU6500_ReadAccel();
-    HAL_Delay(500);
+    if ((printTick % 25) == 0)
+    {
+        sprintf(msg, "Counter: %lu\r\n", blinkCounter);
+        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
+    printTick++;
+    /* Matches Scene.dt=0.02f (research.md Decision 21) -- was HAL_Delay(500) through Round 8. */
+    HAL_Delay(20);
   }
   /* USER CODE END 3 */
 }

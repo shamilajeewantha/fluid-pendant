@@ -824,3 +824,303 @@ reusable later to probe DMA/refresh performance margins — not a hard requireme
 | `MotionInput` units the accel driver must ultimately produce | `m/s²` (matches `Scene.gravity_x/y`); firmware now prints this alongside raw/mg values for on-hardware verification before any sim code consumes it (Decision 16) |
 | How to show a refreshing pattern on real hardware before the physics core exists | New frame buffer (240 slots, same indexing as `bsrr_buf`/`moder_buf`) filled by a deterministic "sweeping window" pattern generator every ~0.5s, translated into `moder_buf` only (`bsrr_buf` unchanged); decoupled from the DMA scan's own much faster rate; this is the same buffer `DisplayFrame`/`cellColor` will populate once ported (Decision 17) |
 | Real charlieplex hardware has no per-LED PWM | Reverted Decision 13's continuous brightness; restored Decision 12's hysteresis-on-density binary output (Decision 15) — same flicker-free behavior, matches real hardware capability |
+
+## Round 9 (2026-06-23) — porting the physics core onto `axelor`, real sim now drives the LEDs
+
+User copied `final_project/flip_sim_c`'s contents into `stm_projects/axelor/Core/Src/flip_sim_c/` and
+asked for the placeholder pattern generator (Decision 17) to be replaced by the real ported
+simulation, driven by the already-wired accelerometer, while preserving every safety mechanism
+built in Rounds 7–8. Edits remain confined to `stm_projects/axelor` per the user's standing
+instruction; `final_project/flip_sim_c` itself is untouched.
+
+### Decision 18 — Which copied files actually get ported, which get discarded
+
+**Decision**: only `flip_fluid.c`/`.h`, `flip_utils.c`/`.h`, and `scene.c`/`.h` are adapted into the
+firmware build. `main.c`, `util.c`, `util.h`, the `Dockerfile`/`.dockerignore`, `Makefile`,
+`README.md`, and the prebuilt `main.exe` are **not** part of the firmware — confirmed by inspection
+(`util.h`/`util.c`/`main.c` `#include <windows.h>`/`<commctrl.h>` directly; they are Stage 2's
+Win32 GUI/trackbar glue, per `contracts/physics-core.md`'s own scoping of which files are the
+actual physics-core contract).
+
+**Rationale**: `contracts/physics-core.md` already states the physics core "MUST compile and run
+with no STM32 HAL includes... and no `<windows.h>` dependency" — checking the actual copied files
+confirms `flip_fluid.{c,h}`, `flip_utils.{c,h}`, `scene.{c,h}` satisfy this today (verified via
+grep: their only `#include`s are `<math.h>`, `<stdlib.h>`, `<string.h>`, `<stdio.h>`,
+`<stddef.h>`, and each other's headers) — they were already portable without modification to their
+includes. `util.*`/`main.c` are the one part of the copy that is categorically Stage-2-only and
+must not be dragged into the firmware build.
+
+**Alternatives considered**: porting `util.c`'s rendering logic into a debug-only UART dump —
+rejected as unnecessary scope; the existing `[CHARLIEPLEX] frame: row N lit` print plus the matrix
+itself is sufficient on-hardware visibility, and `util.c`'s trackbar/window code has no embedded
+equivalent worth building this round.
+
+### Decision 19 — `malloc`/`calloc` replaced with static fixed-size arrays
+
+**Decision**: every dynamic allocation in `flip_fluid.c` (`g_u`, `g_v`, `g_du`, `g_dv`, `g_prevU`,
+`g_prevV`, `g_p`, `g_particleDensity`, `g_cellType`, `g_numCellParticles`,
+`g_firstCellParticle`, `g_cellParticleIds`, `g_particleVel`) and `flip_utils.c` (`FlipFluid`
+itself, `particlePos`, `s`, `cellColor`) becomes a `static` array sized to this project's fixed,
+compile-time-constant tank/grid parameters, with `ensure_grid_alloc`/`ensure_alloc_particle_vel`'s
+re-allocate-if-bigger logic deleted (size never changes after the one fixed `setupScene()` call).
+
+**Rationale**: this project has exactly one tank configuration (`GRID_X=15`, `GRID_Y=16`,
+`PAD_FNUM_X=17`, `PAD_FNUM_Y=17`, `relWaterWidth/Height=0.8`) — every dimension `setupScene()`
+currently computes from constants is itself a constant; nothing about this firmware ever creates a
+second `FlipFluid` or resizes one at runtime. Hand-tracing `setupScene()`'s formula gives
+`numX≈17`, `numY≈19`, `maxParticles≈323`; sizing every array statically to that fixed maximum costs
+roughly 21 KB of `.bss` (computed: ~2.6 KB × 2 for `particlePos`/`particleVel`, ~1.2 KB × 2 for `s`/
+`cellColor`-class buffers, ~8 KB across the seven `wantCells`-sized velocity/pressure grids, ~3.6 KB
+across the per-cell particle-bucket arrays) — comfortably under the constitution's 80%-of-64KB-SRAM
+budget (51.2 KB) even before accounting for `axelor`'s existing charlieplex buffers (`bsrr_buf`/
+`moder_buf`/`moder_template` at 240×4 bytes each ≈ 2.9 KB combined, plus `cpFrameBuf`/
+`cpCandidateModer`). Eliminating the heap entirely on a bare-metal target with no OS removes a
+whole category of risk (allocation failure with no handler, fragmentation, double-free) that this
+project has no use for, since nothing it does actually needs a *variable*-sized allocation —
+exactly the kind of unnecessary-complexity-removal this project has favored throughout (constitution
+Principle I: minimize global mutable state; here, fixed-size statics are more predictable than the
+heap, not less).
+
+**Alternatives considered**:
+- *Keep `malloc`/`free`, rely on newlib-nano's `_sbrk`-backed heap*: rejected — works, but adds a
+  whole subsystem (heap implementation, `_sbrk` stub, a heap size decision in the linker script)
+  for zero benefit given every size is already a fixed constant; also reintroduces the
+  allocation-can-fail class of bug this round has no need to accept.
+- *Keep dynamic sizing in case tank parameters become user-configurable later*: rejected as
+  speculative — no current requirement asks for runtime-configurable tank size, and Principle I
+  disfavors designing for hypothetical future requirements.
+
+### Decision 20 — `floor` → `floorf` (constitution Principle IV compliance) — CORRECTED, no-op
+
+**Original decision (now retracted)**: this entry originally claimed `flip_utils.c:39` had a lone
+non-`f`-suffixed `floor` call needing a `floorf` fix.
+
+**Correction (implementation phase, Round 9)**: that finding was a false positive from an
+imprecise grep pattern (`floor[f]?`) that matched the *prose word* "floor" inside a code comment
+("...floor-division round-trip risks off-by-one errors...") at that line, not an actual function
+call. Re-verified directly against the as-ported `Core/Src/flip_fluid.c` and `Core/Src/flip_utils.c`
+with `grep -n "[^f]floor("` (a pattern that only matches `floor(` not preceded by `f`) — **zero
+matches** in either file. Every real `floor`-family call site in this codebase (in
+`ensure_particle_hash_alloc`, `push_particles_apart`, `update_particle_density`,
+`transfer_velocities`) already correctly uses `floorf`, confirmed by inspection during the T089
+static-array conversion.
+
+**Conclusion**: there is no `floor`→`floorf` bug to fix. tasks.md's T091 is corrected to record
+this as a verification-only task (no code change made), rather than performing a no-op edit.
+Constitution Principle IV's `f`-suffixed-math requirement was already satisfied by this source
+before Round 9 began.
+
+### Decision 21 — Simulation tick cadence decoupled from the existing 500ms print/blink loop
+
+**Decision**: the main loop's per-iteration period is shortened from `HAL_Delay(500)` to
+`HAL_Delay(20)` — matching `scene_default()`'s `dt=0.02f` (20ms/50Hz) exactly, so simulated time
+advances at the same rate as real time (the same real-time-matching principle already established
+in research.md Decision 11 for Stage 2). The verbose UART prints (`Counter:`, `[ACCEL] raw=.../
+mm/s2=...`, the old per-frame `[CHARLIEPLEX] frame: row N lit`) are throttled to fire once every 25
+iterations (~500ms) via a counter-modulo check, rather than every 20ms tick — printing at full
+20ms-tick rate would mean each iteration's multiple blocking `HAL_UART_Transmit(..., HAL_MAX_DELAY)`
+calls (each one several milliseconds at 115200 baud for these message lengths) eat most or all of
+the 20ms budget themselves, starving the simulation step of the time it's actually supposed to run
+in.
+
+**Rationale**: constitution Principle IV requires each simulation tick to complete within 50ms and
+the display to sustain ≥10 FPS; `dt=0.02f` was specifically chosen in Stage 2 (Decision 11) to match
+a 50Hz real-world tick, and there is no reason for the firmware to use a different relationship
+between simulated and real time than the already-validated Stage 2 desktop build uses. Decoupling
+the print cadence from the simulation cadence (rather than slowing the simulation down to match the
+old print-friendly 500ms loop) keeps the *physics* on the schedule that was actually tuned and
+validated in Stage 2, while still giving readable, non-overwhelming UART output.
+
+**Alternatives considered**:
+- *Keep the 500ms loop period, run multiple internal `simulateFlipFluid()` substeps per iteration
+  (fixed-timestep accumulator) to "catch up"*: viable in principle, but adds an accumulator/substep-
+  count concept purely to preserve a print cadence that has no inherent meaning — rejected as
+  unnecessary complexity when simply shortening the loop period and throttling prints achieves the
+  same real-time accuracy more directly.
+- *Move the simulation into a hardware-timer ISR, separate from the main loop*: rejected for this
+  round — would touch the same kind of new-interrupt-mechanism territory the project has
+  deliberately avoided adding for the display refresh in Decision 17, and the main loop's existing
+  `chargePlexFaulted` gating/fail-safe structure already lives in `while(1)`; moving the tick
+  elsewhere would require re-deriving those interactions from scratch for no requirement that asks
+  for it.
+
+### Decision 22 — Accelerometer reading feeds `simulateFlipFluid` as `gravity_x`/`gravity_y`, with a magnitude clamp
+
+**Decision**: each tick, the already-computed `accelX_mps2`/`accelY_mps2` (Decision 16, `MPU6500_
+ReadAccel()`) are clamped to a maximum magnitude of **`MAX_GRAVITY_MPS2 = 19.62f`** (the MPU-6500's
+own ±2g full-scale range, `ACCEL_CONFIG.AFS_SEL=0` per `MPU6500_Init()` — confirmed via
+spec.md Clarifications, Session 2026-06-23) before being passed as `simulateFlipFluid`'s
+`gravity_x`/`gravity_y` parameters — directly, with no intermediate `MotionInput` struct introduced
+this round (the existing two `float` locals already are that shape; adding a struct around two
+already-adjacent floats is not justified by anything this round needs).
+
+**Rationale**: spec edge case "What happens when the device is shaken hard or experiences a sudden
+acceleration spike? The displayed fluid MUST remain visually stable" and data-model.md's
+`MotionInput` validation rule "Magnitude clamped to a maximum (prevents a violent shake from
+injecting an unbounded force into `integrate_particles`)" both require this; without it, a hard
+shake could feed a multi-`g` spike directly into the solver's particle integration step, which
+(per `flip_fluid.c`'s `integrate_particles`) has no internal clamping of its own — an unclamped
+spike risks particles being flung outside the padded solver grid in one step, which is exactly the
+kind of instability the existing FLIP solver was not written to recover from gracefully. Clamping at
+the sensor/glue boundary (rather than inside the physics core, which the constitution and
+`contracts/physics-core.md` both require stays a verbatim, unmodified port) keeps the clamp in the
+one place (`main.c`, glue code) that is allowed to change.
+
+**Alternatives considered**:
+- *Clamp inside `integrate_particles`*: rejected — would modify the ported physics core itself,
+  violating `contracts/physics-core.md`'s "ported verbatim" contract and constitution Principle III's
+  module-boundary rule; the clamp belongs in the sensor-to-physics glue, not the physics.
+- *Low-pass filter instead of a hard clamp*: deferred — `contracts/sensor-driver.md`'s Round 8 status
+  already flags dead-banding/low-pass filtering as not-yet-implemented, open work for whenever the
+  full interrupt-driven sensor contract is built; a hard magnitude clamp is the minimum needed to
+  satisfy the spec edge case today without expanding this round's scope into the sensor driver
+  rewrite.
+
+### Decision 23 — `cellColor` wired directly into `cpFrameBuf`, replacing `ChargePlex_GeneratePattern()`'s placeholder sweep; nothing below `ChargePlex_ApplyFrameBuffer()` changes
+
+**Decision**: `update_cell_colors_from_types()` (in the ported `flip_fluid.c`) already writes
+`outColors[dstY * GRID_X + dstX] = 0.0f or 1.0f` — confirmed by reading it directly: `dst = dstY *
+GRID_X + dstX`, i.e. **row-major with row=`dstY` (0..15), col=`dstX` (0..14)** — which is *exactly*
+`cpFrameBuf[row][col]`'s existing shape (`CP_ROWS=16`, `CP_COLS=15`, confirmed identical to `GRID_Y`/
+`GRID_X`) with no transpose or remapping needed. `ChargePlex_GeneratePattern()` is deleted entirely
+and replaced by a tick that calls `simulateFlipFluid()` then copies `f->cellColor[row*GRID_X+col] >
+0.5f` into `cpFrameBuf[row][col]`. `ChargePlex_ApplyFrameBuffer()`, `ChargePlex_ValidateScanTable()`,
+`ChargePlex_BuildScanTable()`, `bsrr_buf`, `moder_template`, `ChargePlex_ForceSafeState()`,
+`ChargePlex_CheckAlive()`, and the TIM1/DMA setup in `main()` are **not modified by this round** —
+the simulation only ever gets to influence `cpFrameBuf`, the exact same upstream-of-the-validator
+boundary the placeholder pattern generator wrote through in Round 8. This is the direct answer to
+"is this a safety loophole": the sim is exactly as constrained as the placeholder sweep was — it can
+only express plain per-cell on/off intent; it has no path to write `moder_buf`, `bsrr_buf`, or any
+register directly, and every frame it produces still goes through the unchanged validate-or-reject
+gate before any of it reaches hardware.
+
+**Rationale**: this is precisely the hand-off `contracts/physics-core.md` already specifies
+("Outputs: the `FlipFluid.cellColor` buffer... this is the sole hand-off point to the display
+layer") and `data-model.md`'s `AxelorFrameBuffer` entity already anticipated ("This is the exact
+slot the eventual `DisplayFrame`/`cellColor` output is expected to fill once the physics core is
+ported — the pattern generator is a placeholder producer for the same consumer... not a separate
+mechanism that integration would need to replace") — Round 8 deliberately built this boundary so
+that swapping the placeholder for the real thing would be exactly this small.
+
+**Alternatives considered**:
+- *Have the simulation glue write `moder_buf` directly, skipping the frame-buffer/validator step
+  "since the sim is already trustworthy"*: rejected outright — this is the one place this round
+  must not cut a corner; the entire reason `ChargePlex_ApplyFrameBuffer`'s validate-or-reject gate
+  exists is to fail safe against *any* upstream bug (placeholder generator or real physics, it makes
+  no difference), and a porting/indexing bug in freshly-adapted physics code is at least as likely
+  as a bug in the placeholder sweep that needed fixing twice already this project.
+
+### Decision 24 — `Scene.paused` forced false; no pause/run UI exists on this board
+
+**Decision**: `scene_default()`'s `paused = true` (a Win32-GUI-appropriate default — Stage 2 starts
+paused until the user clicks Start) is overridden to `false` immediately after `scene_init()` in
+`axelor`'s glue code, since there is no button or control on the pendant to ever un-pause it
+otherwise.
+
+**Rationale**: spec acceptance scenario requires the device to "keep producing a valid, stable
+displayed pattern continuously during normal operation" — a permanently-paused simulation would
+satisfy "stable" vacuously but not "valid... reacting to motion," defeating the entire feature.
+`scene.c` itself is not modified (its default stays `true`, correct for Stage 2's own UI-driven
+flow per `contracts/physics-core.md`'s "ported verbatim" rule); only the one field assignment in
+`axelor`'s own glue code differs from the default.
+
+## Round 10 — Physical row/column mapping investigation (2026-06-23, on-hardware findings, three passes — firmware fix ultimately retracted)
+
+**Decision (final, Pass 3)**: no firmware change. `axelor`'s `cellColor`→`cpFrameBuf` copy step
+writes to `cpFrameBuf[row][col]` directly, exactly as Decision 23 originally specified, with no
+row/column transform of any kind. The root cause turned out to be a physical wiring defect on the
+user's board, now corrected by the user in hardware — not a firmware/software mapping bug at all.
+Passes 1 and 2 below produced a firmware compensation for that wiring defect; once the wiring
+itself was fixed, that compensation became not just unnecessary but actively wrong (it would
+mis-map an already-correct raw signal), so it was removed in Pass 3.
+
+**Pass 1 (offset only)**: the user ran `stm_projects/axelor-test` (a backup copy that still has
+Round 8's per-row sweep pattern and its `[CHARLIEPLEX] frame: row N lit` UART print) and reported,
+on real hardware: firmware row index 0 (the first row lit at boot) physically lights up at what
+they counted as the board's 8th row, and increasing the firmware row index moves the lit row
+consistently in one direction from there. This is a board-wiring fact
+(`ChargePlex_BuildScanTable`'s `src` pin-enumeration order doesn't happen to match the PCB's
+physical row order), not a defect in the validator, DMA scanner, or the simulation itself. The
+first fix applied was `physicalRow = (row + 8) % CP_ROWS` — reasoned (incorrectly, see Pass 2) to
+be direction-independent since 8 is an exact half of `CP_ROWS = 16`, so a forward or backward
+rotation by that exact distance lands on the same slot either way. That reasoning is true for the
+*anchor point* but does not make the overall *sweep order* direction-independent — see Pass 2.
+
+**Pass 2 (direction correction + column mapping)**: per the user's explicit request, `axelor-test`
+was extended with a dedicated calibration sweep (replacing its `ChargePlex_GeneratePattern`):
+raw, untransformed row index 0→15 lit one at a time (top of the function's loop), then raw column
+index 0→14 lit one at a time, looping forever, each step printed over UART
+(`[CHARLIEPLEX] ROW n of 16 ...` / `COLUMN n of 15 ...`) — deliberately built in `axelor-test`, not
+`axelor`, per explicit instruction to keep `axelor` frozen until this was understood. On real
+hardware, the user reported: rows swept "down to up" and columns swept "right to left" — both the
+*opposite* of the intended top-to-bottom / left-to-right reading order. This is new information
+Pass 1 didn't have: the raw firmware index's *direction* of travel (not just its starting point)
+needed correcting, and the column dimension needed a mapping for the first time (previously
+flagged as an open, unconfirmed gap in `contracts/display-driver.md`).
+
+The corrected row formula keeps Pass 1's confirmed anchor (raw index 0 ↔ the physical row the user
+counted as "8") but negates the step direction: `(8 - row + 16) % 16` instead of `(row + 8) % 16`
+— at `row = 0` both formulas still give `8` (anchor preserved); for every other `row` they diverge
+(direction corrected). The column formula is a pure mirror (`14 - col`), since no offset/anchor
+asymmetry was reported for columns, only a direction reversal.
+
+Both Pass 1 and Pass 2 fixes were applied at the exact same point Decision 23 already established
+as the only place the Round 9 producer is allowed to touch (upstream of
+`ChargePlex_ApplyFrameBuffer`'s validate-or-reject gate) — `ChargePlex_BuildScanTable`,
+`ChargePlex_ValidateScanTable`, `ChargePlex_ApplyFrameBuffer`, `ChargePlex_ForceSafeState`,
+`ChargePlex_CheckAlive`, `bsrr_buf`, and `moder_template` were never touched by either pass.
+Build-verified (headless STM32CubeIDE build) after every pass, including the Pass 3 revert: 0
+errors, 0 warnings.
+
+**Pass 3 (retraction — root cause was a wiring defect, not a mapping bug)**: after Pass 2 was
+applied to `axelor`, the user re-ran `axelor-test`'s raw row+column sweep again and reported it
+now sweeps exactly as expected — rows top-to-bottom, columns left-to-right, with no offset and no
+direction reversal — because they had found and fixed a physical wiring mistake on the board in
+the meantime. This means the raw, untransformed `(src,dst)` enumeration from
+`ChargePlex_BuildScanTable` now correctly corresponds to the board's physical row/column layout on
+its own, with the hardware corrected. Pass 1's and Pass 2's firmware-side compensation (the row
+offset+reversal and column mirror) was therefore retracted from `axelor`'s `main.c` — applying it
+on top of now-correct wiring would have reintroduced exactly the scrambling it was built to fix.
+**Lesson for future rounds**: when on-hardware row/column behavior looks wrong, check for a wiring
+mistake before reaching for a firmware-side coordinate transform — this round spent two passes
+building and refining a compensation for a problem that the right next step (re-checking the
+physical wiring) resolved directly.
+
+**Pass 4 (accelerometer axes swapped relative to display)**: running the real simulation on the
+now-rewired board, the user found that holding the pendant upright in its normal worn orientation
+made the fluid settle toward the display's *right edge* (a column position) instead of the bottom
+row, even though the row/column wiring itself (Pass 3) was confirmed correct. Rotating the pendant
+90° made it settle at the bottom correctly, which pins this down to a pure axis swap rather than a
+sign/mirroring issue: the MPU-6500's physically-mounted X axis is the board's *vertical* axis and
+its Y axis is the board's *horizontal* axis — backwards from what `main.c` originally assumed.
+Fixed in `main.c`'s main loop by swapping which accel reading feeds which `simulateFlipFluid`
+parameter: `clampedGravityX` now reads `accelY_mps2` and `clampedGravityY` now reads
+`accelX_mps2` (matching `flip_fluid.c`'s `dstY*GRID_X+dstX` convention, where `gravity_y` drives row
+motion and `gravity_x` drives column motion). `MPU6500_ReadAccel()` itself and `simulateFlipFluid`'s
+parameter semantics are unchanged — this is board-specific glue code only. Build-verified: 0
+errors, 0 warnings, both configs.
+
+This resolves the "still open" display-orientation question below for the *horizontal* axis. The
+*vertical* half of that question (whether `cellColor` row 0, the simulated floor, lands at the
+pendant's physical bottom edge once gravity correctly pulls toward the right axis) remains pending
+T099/T100's on-hardware run, now with both the row/column wiring (Pass 3) and the gravity-axis
+mapping (Pass 4) corrected.
+
+**Still open**: whether `cellColor` row 0 (the simulated tank's floor, where fluid pools when
+`gravity_y` pulls it toward the wall at solver `y=0`) visually lands at the pendant's physical
+bottom edge — i.e., whether the *display orientation* (not just the raw row/column order, which is
+now confirmed correct) matches intuitive "fluid falls down" behavior — is exactly what
+`quickstart.md` Round 9 checks 2–4 (tilt response, settling, shake stability) are designed to
+catch, and remains open pending T099/T100's on-hardware run against the now-corrected `main.c`.
+
+## Summary of resolved unknowns (Round 9 additions)
+
+| Unknown | Resolution |
+|---|---|
+| Which copied `flip_sim_c` files are actually firmware-portable | `flip_fluid.{c,h}`, `flip_utils.{c,h}`, `scene.{c,h}` only — `main.c`/`util.{c,h}` are Win32-only and excluded (Decision 18) |
+| `malloc`/`calloc` on a bare-metal target with no heap setup | Converted to fixed-size `static` arrays sized to this project's one fixed tank configuration (~21 KB total, well under the 51.2 KB SRAM budget) (Decision 19) |
+| Suspected stray `floor` (not `floorf`) call | False positive — was a comment match, not a real call; zero actual non-`f` `floor` calls exist (Decision 20, corrected) |
+| Simulation tick rate vs. the existing 500ms print/blink loop | Main loop period shortened to 20ms to match `dt`; verbose UART prints throttled to every 25th iteration instead (Decision 21) |
+| Risk of an unclamped acceleration spike destabilizing the solver | `gravity_x`/`gravity_y` magnitude-clamped in `axelor`'s glue code before reaching `simulateFlipFluid` (Decision 22) |
+| How `cellColor` actually reaches the LED matrix | Copied directly into `cpFrameBuf[row][col]` (row-major index match confirmed exact, no remapping) — `ChargePlex_ApplyFrameBuffer`'s validate-or-reject gate and everything below it stays untouched (Decision 23) |
+| `Scene.paused` defaults to `true` (Win32 "click Start" convention) | Forced `false` in `axelor`'s glue only; `scene.c`'s shared default is unchanged (Decision 24) |

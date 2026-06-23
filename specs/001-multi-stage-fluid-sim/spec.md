@@ -8,6 +8,12 @@
 
 **Input**: User description: "Build a multi-stage fluid simulation project. Stage 1: Create a very simple JavaScript fluid simulation prototype running on a web page for quick visual testing. Stage 2: Create a matching C simulator as a Windows application, reusing the existing, already-functional C simulation source found in the local 'final projects' directory rather than rewriting the math. Stage 3: Build an STM32CubeIDE-compatible bare-metal project utilizing the identical ported C simulation logic. The firmware must read data from an accelerometer and map those inputs directly to the simulation, then output the physics states onto a custom charlieplexed LED matrix configured with 16 rows and 15 columns. The core physics calculation must remain fully modular and separate from the visual display and hardware driver layers."
 
+## Clarifications
+
+### Session 2026-06-23
+
+- Q: The Edge Cases section requires the display to "remain visually stable" under a "sudden acceleration spike" / being "shaken hard," but doesn't quantify that threshold, and `research.md` Decision 22 names a magnitude-clamp constant without a value. What should the accelerometer-derived gravity magnitude be clamped at before it reaches the simulation? → A: Clamp at `19.62 m/s²` (the MPU-6500's own ±2g full-scale range) — rely on the sensor's own physical ceiling rather than further restricting it to the simulation's normal 1g resting magnitude.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Quick Visual Prototype in the Browser (Priority: P1)
@@ -58,7 +64,7 @@ A person wearing or holding the finished pendant wants the LED matrix to display
 
 ### Edge Cases
 
-- What happens when the device is shaken hard or experiences a sudden acceleration spike? The displayed fluid MUST remain visually stable (no frozen frames, no runaway/exploding particle behavior) even under input far outside normal handling motion.
+- What happens when the device is shaken hard or experiences a sudden acceleration spike? The displayed fluid MUST remain visually stable (no frozen frames, no runaway/exploding particle behavior) even under input far outside normal handling motion — the accelerometer-derived gravity magnitude fed into the simulation MUST be clamped at 19.62 m/s² (the MPU-6500's own ±2g full-scale range) before being applied (Clarifications, Session 2026-06-23).
 - What happens if the accelerometer briefly fails to provide a reading (e.g., a single missed sample)? The simulation MUST continue running using the most recent valid input rather than stopping or displaying a corrupted frame.
 - How does the system handle the mismatch between a 16-row and 15-column display (not square)? The mapping from simulation state to LED matrix MUST account for the non-square shape so the displayed pattern is not stretched, cropped, or misaligned.
 - What happens during the brief period after power-on before the first accelerometer reading arrives? The display MUST show a defined neutral/resting state rather than undefined or garbage output.
