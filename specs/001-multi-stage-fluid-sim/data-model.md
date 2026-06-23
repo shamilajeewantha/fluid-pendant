@@ -75,3 +75,49 @@ col-pin) drive pattern on the 16 GPIO pins.
   a scan step (true charlieplexing constraint); all others held Hi-Z.
 - The mapping table is the *only* place `DisplayFrame` indices are translated to physical pins —
   it must not leak into `physics/` or `sensor/` modules.
+
+## AccelTelemetry (axelor, Round 8 — research.md Decision 16)
+
+A firmware-local, UART-only diagnostic projection of one `MotionInput`-shaped reading at each of
+its conversion stages, printed side by side so an axis/sign/scale mistake is visible against a
+known tilt before any simulation code exists to consume it. **Not** itself part of `MotionInput`
+or written into any `Scene` field — purely observational at this stage.
+
+| Field | Type | Notes |
+|---|---|---|
+| `accelX_raw`/`Y`/`Z` | `int16_t` | existing — two's-complement register value, unchanged |
+| `accelX_mg`/`Y`/`Z` | `long` (milli-g) | existing — `raw * 1000 / 16384` (±2g range) |
+| `accelX_mps2`/`Y`/`Z` | `float` (m/s²) | **new this round** — `(mg / 1000.0f) * 9.81f`; same unit/scale `MotionInput.x`/`y` and `Scene.gravity_x`/`y` already use |
+
+**Validation rules**:
+- Printed every existing 500ms read tick alongside the raw/mg values already printed — no new read
+  cadence, no new sensor mode.
+- Read-only with respect to simulation state: this round writes no `Scene`/`FlipFluid` field from
+  any of these values (NO SIM INTEGRATION, per explicit user instruction).
+
+## AxelorFrameBuffer (axelor, Round 8 — research.md Decision 17)
+
+The firmware-local stand-in for `DisplayFrame`/`cellColor` until the physics core is ported onto
+this board — same 240-slot indexing as the existing charlieplex `bsrr_buf`/`moder_buf` (one entry
+per `(src,dst)` pin-pair slot, in `ChargePlex_BuildScanTable`'s existing enumeration order), but
+owned by a pattern generator instead of `FluidSimState`, and consumed by a translation step instead
+of being read directly by DMA.
+
+| Field | Type | Notes |
+|---|---|---|
+| `frameBuf` | fixed-size array, 240 entries, 1 bit each (on/off) | which slots the *current* pattern marks "on"; refilled by the pattern generator, never read by DMA directly |
+| pattern generator state | one persisted integer (sweep offset) | advances by a fixed step each refresh tick, wraps modulo 240 — no floats/trig needed (research.md Decision 17) |
+
+**Validation rules**:
+- Refreshed once per ~0.5s tick (reuses the existing main-loop cadence), **decoupled from** the
+  DMA scan's own much faster, unchanged rate.
+- Every refresh is translated into `moder_buf` only (`bsrr_buf` is written once at boot and never
+  again, since pin identity per slot never changes — only on/off does) and re-validated by
+  `ChargePlex_ValidateScanTable()` (relaxed to accept zero-output "off" slots as valid, alongside
+  the existing exactly-2-output "on" slot rule) **before** being allowed to replace the live
+  `moder_buf` — a malformed new frame is dropped (previous frame kept) rather than risked, per this
+  board's no-current-limiting-resistor constraint already documented in tasks.md/plan.md history.
+- This is the exact slot the eventual `DisplayFrame`/`cellColor` output is expected to fill once the
+  physics core is ported — the pattern generator is a placeholder producer for the same consumer
+  (the `moder_buf` translation step), not a separate mechanism that integration would need to
+  replace.

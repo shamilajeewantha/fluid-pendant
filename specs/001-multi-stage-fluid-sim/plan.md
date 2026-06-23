@@ -102,6 +102,19 @@ Decision 15). Reverted Round 5's continuous brightness, but specifically by **re
 state and two threshold comparisons as before, so the binary output stays flicker-free without
 costing anything new.
 
+**Round 8 (2026-06-22, axelor Stage 3 bring-up begins)**: this plan's original Structure Decision
+deferred Stage 3 entirely to a later, user-initiated phase. That phase has now started, directly in
+`stm_projects/axelor` — the user independently brought the charlieplex DMA scan and MPU-6500 SPI
+read path up to a working, on-hardware-confirmed state across the preceding sessions. This round
+scopes the next two narrow pieces (research.md Decisions 16–17), **explicitly excluding** any
+physics-core integration: (1) extend the existing UART accel telemetry to also print the value in
+the exact units `MotionInput` will need (`m/s²`), verified on real hardware before any simulation
+code exists to consume it; (2) replace the current always-everything-on bring-up test pattern with
+a new, periodically-refreshing (~0.5s) frame buffer — the firmware-local stand-in for
+`DisplayFrame`/`cellColor` — translated into the existing `moder_buf` only, with the DMA scan
+mechanism itself left completely unchanged. All edits for this round are confined to
+`stm_projects/axelor` per explicit user instruction.
+
 ## Technical Context
 
 **Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript
@@ -215,14 +228,17 @@ stm_projects/<new-pendant-firmware>/   # Stage 3 — STM32CubeIDE project, model
     └── Core/Inc/ (matching headers)
 ```
 
-**Structure Decision**: This implementation pass covers **Stage 1 and Stage 2 only**, both edited
-in place under `final_project/` (the canonical copy — the byte-identical duplicates at the repo
-root, `flip_sim_js/` and `flip_sim_c/`, are intentionally left untouched). **Stage 3 (the STM32
-firmware project) is explicitly out of scope for this plan/tasks pass.** The user will initiate
-the STM32CubeIDE project themselves as a separate, later phase; the Stage 3 design above
-(cloned from `stm_projects/axelor`, contracts/, data-model.md, research.md Decisions 4–6) is kept
-as forward reference so that future phase isn't starting from a blank page, but no Stage 3 files
-are created or modified now, and `tasks.md` contains no Stage 3 execution tasks.
+**Structure Decision**: Stage 1 and Stage 2 work (`final_project/`) from earlier rounds stands as
+before. **Stage 3 has now begun (Round 8), narrowly scoped and confined entirely to
+`stm_projects/axelor`** — no other stage's files change in this round. The originally-imagined
+Stage 3 subdirectory layout (`physics/`, `display/`, `sensor/`) below is **not** how `axelor` is
+actually structured (it's a flat, CubeMX-generated `Core/Src/main.c` with hand-written additions in
+`USER CODE` regions) and is kept only as the long-term forward-reference shape; Round 8's two
+pieces both land as additions inside `axelor/Core/Src/main.c` (and its paired `main.h`/
+`stm32l4xx_it.c` where a SysTick hook is needed), not as new files in a not-yet-existing
+`display/`/`sensor/` split. The physics core itself (`flip_fluid.c`/`flip_utils.c`/`scene.c`) is
+still **not** copied into `axelor` in this round — that remains a later, separate step, and
+`tasks.md` for this round contains no physics-core-integration tasks.
 
 ## Complexity Tracking
 

@@ -682,6 +682,127 @@ actually do).
   project's own existing charlieplex driver reference, confirming the single-buffer-per-scan
   structure that makes per-LED PWM nontrivial to add.
 
+## Round 8 — axelor Stage 3 bring-up begins: accel telemetry + placeholder display pattern (2026-06-22)
+
+Stage 3 (firmware) was explicitly deferred by this plan's original Structure Decision — "the user
+will initiate the STM32CubeIDE project themselves as a separate, later phase." That phase has now
+started, directly inside `stm_projects/axelor` (the same board this plan's Hardware Constraints
+section already names). Across the preceding sessions the user independently brought up the
+charlieplex DMA scan (TIM1 + DMA-to-`GPIOB->BSRR`/`MODER`, modeled on `sample-charlieplexing` per
+Decision 4) and the MPU-6500 SPI read path (`MPU6500_ReadAccel()`, raw register → milli-g, per the
+sensor part correction in Decisions 5/contracts/sensor-driver.md) to the point that both build,
+flash, and run correctly on real hardware — confirmed by the user ("ok great now all leds light up
++ serial uart works too"). This round scopes the *next* two concrete, narrow pieces of work,
+explicitly **excluding** wiring either one into the actual physics core yet:
+
+1. Extend the existing UART telemetry to also print the accelerometer reading in the exact units
+   `MotionInput` will eventually need (`m/s²`, not raw LSBs or `mg`), so the conversion is verified
+   on real hardware *before* anything calls `simulateFlipFluid` with it.
+2. Replace the current "light every one of the 240 slots, unconditionally, forever" bring-up test
+   pattern with a periodically-refreshing pattern over a **new buffer that sits logically where
+   `DisplayFrame`/`cellColor` will sit once the physics core is ported** — explicitly not the DMA
+   scan mechanism itself, which stays exactly as validated.
+
+All edits for this round are confined to `stm_projects/axelor` (per explicit user instruction); no
+other stage's files change.
+
+### Decision 16 — Accel telemetry: print raw register values *and* the `m/s²` value `MotionInput` needs, side by side
+
+**Decision**: extend `MPU6500_ReadAccel()`'s existing UART print to add a second line showing each
+axis converted all the way to `m/s²` (`accel_mps2 = (accel_mg / 1000.0f) * 9.81f`), printed
+alongside the already-existing raw register values and milli-g values. No new read path, no new
+sensor mode, no interrupt-driven rework yet — same polled SPI read this module already does at the
+same point in the existing 500ms loop tick.
+
+**Rationale**: data-model.md's `MotionInput` entity is defined as `x`/`y` in plain `float`, unit-
+compatible with `Scene.gravity_x`/`gravity_y` (themselves `m/s²`, magnitude up to 9.81 at rest per
+the existing desktop slider's `sin(angle)*9.81`/`-cos(angle)*9.81` in `util.c`/`script.js`). The
+firmware's MPU-6500 driver currently stops one conversion short of that, at milli-g
+(`accelX_mg`/etc. — already added). Printing the final `m/s²` value over UART now, well before any
+simulation code exists on this board, lets the user visually confirm on real hardware that tilting
+the board produces the *correct-sign, correct-magnitude* numbers `MotionInput` expects — catching
+an axis or sign mistake here, against a printed number, is far cheaper than catching it once it's
+silently driving (or mis-driving) a running fluid simulation. This directly addresses the open gap
+flagged in this same session: which of the MPU-6500's three physical axes are in the display's
+plane, and with what sign, is **unknown without testing on the real board** — printing both
+raw-and-formatted values side by side, then physically tilting the board four ways while reading
+the UART output, is the cheapest way to resolve that gap empirically rather than by assumption.
+
+**Explicitly not in scope for this decision** (per the user's "NO SIM INTEGRATION YET"): no value
+from this print path is read by, or written into, any `Scene`/`FlipFluid` field — there isn't one
+on this board yet. No low-pass filtering or dead-banding is added yet either (contracts/
+sensor-driver.md already specifies that as a requirement for the *eventual* full driver, once
+sim integration happens) — this round's job is exclusively to make the converted number visible
+and verifiably correct, not to start consuming it.
+
+**Alternatives considered**:
+- *Print only the final `m/s²` value, drop the existing raw/mg lines*: rejected — the raw/mg lines
+  are what let the user notice if the *conversion itself* is wrong (e.g. comparing a raw register
+  swing against the expected `m/s²` swing for a known tilt angle); removing them would make a
+  conversion bug invisible.
+- *Add the unit conversion inside a new, separate function*: rejected as unnecessary structure for
+  one multiply; it's added inline in the existing print, same as the existing raw→mg conversion
+  already is.
+
+### Decision 17 — A periodically-refreshing pattern buffer, decoupled from the DMA scan table
+
+**Decision**: introduce a new 240-entry buffer (one entry per charlieplex slot, same indexing as
+the existing `bsrr_buf`/`moder_buf`) that is **not** read by DMA and **not** the thing TIM1 scans —
+call it the *frame buffer* (the firmware-local stand-in for `DisplayFrame`/`cellColor` in
+data-model.md, until the physics core is actually ported onto this board). Once per existing
+500ms main-loop tick (reusing the loop's existing cadence — no new timer needed), a pattern
+generator fills the frame buffer with a new pattern, and a small translation step rewrites only
+`moder_buf` (not `bsrr_buf`, which keeps the same fixed pin-pair-per-slot encoding it already has)
+so that only the slots marked "on" in the frame buffer are actually driven as outputs by the scan;
+everything else reverts to plain input (Hi-Z) for that slot, same as a never-populated slot already
+does today. The existing `ChargePlex_ValidateScanTable()` self-check (which currently requires
+*every* slot to have exactly 2 output pins) MUST be relaxed to also accept a slot with **zero**
+output pins as valid (an "off" slot) — the existing invariant for slots that *are* on (exactly one
+source-high pin, one different sink-low pin, all others untouched) is unchanged and still runs on
+every regenerated frame before it is allowed to go live, for the same reason it was added in the
+first place: this board has no per-leg current-limiting resistors, so a malformed frame must fail
+safe (skip the update, keep the previous known-good frame) rather than ever reach the DMA buffers.
+
+**Pattern chosen**: a "sweeping window" — a contiguous run of `K` consecutive slot indices (in the
+existing raw `(src,dst)` enumeration order from `ChargePlex_BuildScanTable`) marked "on," with the
+window's starting offset advancing by a fixed step each 500ms tick and wrapping modulo 240. This
+needs only one persisted integer (the current offset) and integer modulo arithmetic — no floats,
+no trig, nothing the existing pressure-solver-budget conversation about STM32L4 compute headroom
+needs to weigh in on. Choosing `K` (window width) and the step size are tuning knobs left for
+implementation/on-hardware tuning (tasks.md), not fixed here.
+
+**Why a pattern defined in raw slot-index order, not real (row, col) display positions**: this
+project still does not have a confirmed mapping from a charlieplex `(src,dst)` pin pair to its
+physical position in the 16×15 grid — that depends on the matrix's physical wiring, which hasn't
+been provided. Defining "beautiful" in terms of slot order rather than guessed grid geometry keeps
+this round honest: it demonstrates and exercises the new buffer-and-translation mechanism (which
+*is* the reusable part — `DisplayFrame`/`cellColor` will plug into the exact same frame buffer
+later) without asserting a geometric claim ("this is a wave moving left-to-right") that can't yet
+be verified against the real board's actual wiring.
+
+**Refresh cadence**: ~0.5s per frame update, **explicitly decoupled from the DMA scan rate** — the
+existing TIM1+DMA scan continues cycling through all (currently-enabled) slots at its own much
+faster, unchanged rate (~28.8 kHz/slot, full-240-slot pass in ~8.3ms, per the existing `Period`/
+`Pulse` values already verified on hardware). The 0.5s figure governs only how often the *frame
+buffer's content* changes, independent of and far slower than how fast the DMA hardware re-reads
+whatever is currently in it. The user explicitly flagged this as a deliberately low starting point,
+reusable later to probe DMA/refresh performance margins — not a hard requirement.
+
+**Alternatives considered**:
+- *Random pattern each tick*: rejected — not reproducible/debuggable, and "covers all of the LEDs"
+  is not guaranteed within any bounded time the way a deterministic sweep guarantees it.
+- *Static checkerboard on slot-index parity (even/odd slots on)*: rejected — satisfies "covers all
+  the LEDs" only once (never changes), which doesn't address "I really cannot see much" (a static
+  half-lit pattern is barely more informative than the current all-on pattern) — the user asked for
+  something that visibly refreshes.
+- *Rewrite `bsrr_buf` as well as `moder_buf` per frame*: unnecessary — each slot's source/sink pin
+  *identity* never changes, only whether that slot is driven at all; only `moder_buf` needs to
+  change to turn a slot on/off, so `bsrr_buf` is written once at boot (as today) and never again.
+- *Drive the frame-buffer refresh from a hardware timer interrupt instead of the existing main
+  loop*: rejected for this round — the existing 500ms `HAL_Delay`-based loop already ticks at
+  almost exactly the requested cadence; adding a second timer/ISR for the same 0.5s period would be
+  more new mechanism than this scoped, placeholder-pattern round needs.
+
 ## Summary of resolved unknowns
 
 | Unknown | Resolution |
@@ -700,4 +821,6 @@ actually do).
 | Surface LEDs flicker at rest | Hysteresis threshold on the already-computed `particleDensity`/`particleRestDensity` (Decision 12) — reinstated by Decision 15 after a brief detour through Decision 13 |
 | Display looks unrealistic / too binary for a fixed 16x15 grid | Render continuous brightness directly from `particleDensity`/`particleRestDensity` (clamped 0-1) — **superseded by Decision 15**: real charlieplex hardware has no per-LED PWM, so this was reverted |
 | Top display row (row 1) never lights up | Off-by-one in the density-splat/velocity-transfer upper-neighbor clamp excluded grid index `fNumY-1` entirely (harmless in the original all-walls-closed tutorial design, exposed once Decision 7 opened the top wall); fixed by correcting the clamp to reach the true last index (Decision 14) |
+| `MotionInput` units the accel driver must ultimately produce | `m/s²` (matches `Scene.gravity_x/y`); firmware now prints this alongside raw/mg values for on-hardware verification before any sim code consumes it (Decision 16) |
+| How to show a refreshing pattern on real hardware before the physics core exists | New frame buffer (240 slots, same indexing as `bsrr_buf`/`moder_buf`) filled by a deterministic "sweeping window" pattern generator every ~0.5s, translated into `moder_buf` only (`bsrr_buf` unchanged); decoupled from the DMA scan's own much faster rate; this is the same buffer `DisplayFrame`/`cellColor` will populate once ported (Decision 17) |
 | Real charlieplex hardware has no per-LED PWM | Reverted Decision 13's continuous brightness; restored Decision 12's hysteresis-on-density binary output (Decision 15) — same flicker-free behavior, matches real hardware capability |

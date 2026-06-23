@@ -75,14 +75,40 @@ didn't bring back the original flicker.
   — those are no longer permanently dead/unlit (the solver's internal grid is now padded one cell
   beyond the display on walled sides; the display itself is still exactly 16x15).
 
-## Stage 3 — Firmware on the axelor board (STM32L431CC) — DEFERRED
+## Stage 3 — Firmware on the axelor board (STM32L431CC)
 
-> This stage is a separate, later phase that the user will initiate themselves; it is kept here
-> only as forward reference. It is not part of the current `tasks.md` execution pass (see that
-> file's "Deferred — Stage 3" section).
+> Round 8 (2026-06-22) began this stage, narrowly scoped to the two checks below — see plan.md's
+> Structure Decision. Physics-core integration (the rest of this section, below the Round 8
+> checks) remains a separate, later phase not yet started.
 
 **Prerequisites**: STM32CubeIDE, the axelor board wired to its MPU-6500 (SPI, accelerometer axes
 only) and the 16-pin charlieplexed LED matrix, ST-Link or equivalent programmer/debugger.
+
+**Round 8 checks** (research.md Decisions 16–17; build/flash `stm_projects/axelor` per its own
+README/CubeIDE project, then watch the UART at 115200 baud):
+
+1. **Accel telemetry (Decision 16)**: with the board still/level, confirm the UART prints both the
+   existing raw/mg accel values and the new `m/s²`-converted line, and that the `m/s²` value is
+   close to what's expected for the board's current orientation (one axis near ±9.81, the other
+   two near 0, for whichever axis is currently "down"). Tilt the board four ways (each in-plane
+   direction) and confirm the printed `m/s²` values change sign/magnitude consistently with each
+   tilt — this is how the MPU-6500-axis-to-display-plane mapping (still unresolved, see
+   contracts/sensor-driver.md Round 8 status) gets resolved empirically. No simulation code reads
+   these values yet (NO SIM INTEGRATION this round) — this is a UART-only check.
+2. **Refreshing placeholder pattern (Decision 17)**: confirm the LED matrix no longer shows the
+   prior "everything on, unchanging" bring-up pattern, and instead shows a pattern that visibly
+   changes roughly every 0.5 second, with different LEDs lit across consecutive refreshes (the
+   "sweeping window" — see research.md Decision 17). Confirm via UART that
+   `ChargePlex_ValidateScanTable()`-style validation is still running on each new frame (no
+   `[CHARLIEPLEX] FAULT` lines during normal operation). This pattern is not yet spatially
+   meaningful (no confirmed slot→(row,col) mapping) — that it sweeps smoothly and covers the whole
+   matrix over time is the thing being validated here, not its shape.
+
+**Remaining Stage 3 work (not part of Round 8, prerequisites for the checks below)**: port
+`flip_fluid.c`/`flip_utils.c`/`scene.c` onto `axelor`, replace the Round 8 placeholder pattern
+generator with a real `DisplayFrame` producer from `cellColor`, and resolve the
+`LedMatrixAddressing` slot→(row,col) mapping (contracts/display-driver.md Round 8 status) so that
+mapping is geometrically meaningful.
 
 ```text
 # In STM32CubeIDE: File > Open Projects from File System... > select the new firmware project

@@ -43,6 +43,10 @@
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim1;
+DMA_HandleTypeDef hdma_tim1_up;
+DMA_HandleTypeDef hdma_tim1_ch1;
+
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
@@ -50,13 +54,63 @@ UART_HandleTypeDef huart1;
 uint32_t blinkCounter = 0;
 char msg[128];
 
+/* Charlieplex hardware bring-up scan. This board has NO per-leg current-limiting
+   resistors on PB0..PB15 (confirmed), so the only thing protecting the GPIO pins
+   from a software bug is the software itself -- see ChargePlex_ValidateScanTable
+   and ChargePlex_CheckAlive below. */
+#define CP_PIN_COUNT  16
+#define CP_SLOT_COUNT (CP_PIN_COUNT * (CP_PIN_COUNT - 1)) /* 240: every ordered (src,dst) pin pair */
+
+/* This board's wiring (confirmed by user): each of the 16 PB pins takes a turn as one row's
+   single source/driving pin, with the other 15 pins as that row's sink/column pins -- the
+   standard charlieplex row/column convention. ChargePlex_BuildScanTable's enumeration order
+   (outer loop over src, inner loop over dst) already groups slots into exactly CP_ROWS
+   contiguous blocks of CP_COLS slots each as a direct result -- row r occupies slots
+   [r*CP_COLS, r*CP_COLS + CP_COLS - 1]. */
+#define CP_ROWS CP_PIN_COUNT       /* 16 */
+#define CP_COLS (CP_PIN_COUNT - 1) /* 15 */
+
+static uint32_t bsrr_buf[CP_SLOT_COUNT];
+static uint32_t moder_buf[CP_SLOT_COUNT];
+static volatile uint8_t chargePlexFaulted = 0;
+static uint8_t chargePlexFaultReported = 0;
+
+/* Set true only after HAL_DMA_Start has actually run on both channels in main(), below.
+   SysTick (and therefore ChargePlex_CheckAlive, which it calls every 1ms) starts running at
+   HAL_Init(), several peripheral inits before MX_TIM1_Init() gives hdma_tim1_up/ch1 a real
+   .Instance (set inside HAL_TIM_Base_MspInit, stm32l4xx_hal_msp.c). Without this guard,
+   ChargePlex_CheckAlive reads __HAL_DMA_GET_COUNTER on a NULL .Instance during that gap --
+   garbage memory, not a real transfer counter -- and a false "stalled" reading there
+   permanently latches chargePlexFaulted before the real scan table even exists, silently
+   disabling this watchdog for the rest of the session. */
+static volatile uint8_t chargePlexScanStarted = 0;
+
+/* Immutable per-slot "this is what moder_buf[slot] would be if this slot is on" reference,
+   filled once by ChargePlex_BuildScanTable and never modified afterward -- moder_buf itself
+   gets zeroed for "off" slots every frame, so this is what lets a slot be safely turned back
+   on later without losing its source/sink pin-pair identity. */
+static uint32_t moder_template[CP_SLOT_COUNT];
+
+/* Firmware-local stand-in for DisplayFrame/cellColor until the physics core is ported
+   onto this board (research.md Decision 17, data-model.md AxelorFrameBuffer). Shaped as an
+   actual [row][col] matrix (not a flat 240 array) to match the eventual real DisplayFrame/
+   cellColor shape directly -- no flattening will be needed when that swap happens. Filled by
+   a placeholder pattern generator for now; NOT read by DMA -- only ChargePlex_ApplyFrameBuffer()
+   translates it into moder_buf (via the row/col -> slot formula above), and only after
+   re-validating. The DMA scanner, bsrr_buf, moder_template, and the validator are untouched by
+   this -- this buffer is purely upstream of ChargePlex_ApplyFrameBuffer's existing gate. */
+static uint8_t cpFrameBuf[CP_ROWS][CP_COLS];
+static uint32_t cpCandidateModer[CP_SLOT_COUNT];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -159,6 +213,196 @@ void MPU6500_ReadAccel(void)
     sprintf(msg, "[ACCEL] raw=[%d %d %d] mg=[%ld %ld %ld]\r\n",
             accelX_raw, accelY_raw, accelZ_raw, accelX_mg, accelY_mg, accelZ_mg);
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+    // m/s^2 -- the exact unit/scale MotionInput.x/y and Scene.gravity_x/y will need once a
+    // simulation exists on this board (research.md Decision 16). This is NOT read by any
+    // simulation code yet -- printed only so the conversion and this board's MPU-6500 axis/sign
+    // orientation can be verified against real tilts before anything consumes it.
+    float accelX_mps2 = (accelX_mg / 1000.0f) * 9.81f;
+    float accelY_mps2 = (accelY_mg / 1000.0f) * 9.81f;
+    float accelZ_mps2 = (accelZ_mg / 1000.0f) * 9.81f;
+
+    // Printed as milli-(m/s^2) integers, same float-in-printf avoidance as the mg line above --
+    // the underlying accel*_mps2 floats are the real value a future Scene.gravity_x/y assignment
+    // would use; only the *display* stays integer-only.
+    long accelX_mmps2 = (long)(accelX_mps2 * 1000.0f);
+    long accelY_mmps2 = (long)(accelY_mps2 * 1000.0f);
+    long accelZ_mmps2 = (long)(accelZ_mps2 * 1000.0f);
+
+    sprintf(msg, "[ACCEL] mm/s2=[%ld %ld %ld] (= m/s2 x1000; sim will want this unit/scale)\r\n",
+            accelX_mmps2, accelY_mmps2, accelZ_mmps2);
+    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+}
+
+/* Fills bsrr_buf/moder_buf with every one of the 240 ordered (source,sink) pin
+   pairs on PB0..PB15, generated from the charlieplex formula instead of hand-typed
+   hex -- a transcription error in a 240-entry literal table is exactly the kind of
+   mistake that, on this resistor-less board, could drive two pins into each other.
+   Bit-pattern verified by hand against the working 3-pin proof of concept in
+   stm_projects/sample-charlieplexing (e.g. its LED1 = PB0 source/PB6 sink encodes
+   to moder=0x00001001/bsrr=0x00400001, which this formula reproduces exactly for
+   src=0,dst=6). */
+static void ChargePlex_BuildScanTable(void)
+{
+    int slot = 0;
+    for (int src = 0; src < CP_PIN_COUNT; src++)
+    {
+        for (int dst = 0; dst < CP_PIN_COUNT; dst++)
+        {
+            if (src == dst) continue;
+            bsrr_buf[slot]      = (1UL << src) | (1UL << (dst + 16));
+            moder_template[slot] = (1UL << (src * 2)) | (1UL << (dst * 2));
+            moder_buf[slot]      = moder_template[slot]; /* initial state: every slot on */
+            slot++;
+        }
+    }
+}
+
+/* Confirms every one of the 240 slots is either a valid "on" slot (exactly one source
+   pin high, one different sink pin low, every other pin plain input) or a valid "off"
+   slot (every pin plain input, nothing driven) -- checked before MOE/DMA are ever
+   enabled, and again before any regenerated frame buffer is allowed to replace the
+   live moder_buf (research.md Decision 17), so a table bug fails safe (matrix doesn't
+   start, or the previous known-good frame is kept) instead of silently energizing an
+   unintended pin pair. */
+static int ChargePlex_ValidateScanTable(const uint32_t *moderToCheck)
+{
+    for (int slot = 0; slot < CP_SLOT_COUNT; slot++)
+    {
+        uint32_t moder = moderToCheck[slot];
+        uint32_t bsrr  = bsrr_buf[slot]; /* bsrr_buf never changes after boot -- only moder does */
+        int outputCount = 0;
+        int srcPin = -1, dstPin = -1;
+
+        for (int pin = 0; pin < CP_PIN_COUNT; pin++)
+        {
+            uint32_t field  = (moder >> (pin * 2)) & 0x3UL;
+            int      isSet  = (bsrr & (1UL << pin)) != 0;
+            int      isReset = (bsrr & (1UL << (pin + 16))) != 0;
+
+            if (field == 0x1) /* configured as output for this slot */
+            {
+                outputCount++;
+                if (isReset)    dstPin = pin; /* RESET has priority over SET in BSRR on real silicon */
+                else if (isSet) srcPin = pin;
+                else            return 0; /* output pin with no defined level -- reject */
+            }
+            else if (field != 0x0)
+            {
+                return 0; /* AF/analog should never appear in this table -- reject */
+            }
+            /* field == 0x0 (input): nothing to check. bsrr_buf is immutable and permanently
+               holds this slot's 2 designated pins regardless of whether this slot is currently
+               on or off -- an input pin is electrically disconnected from BSRR/ODR at the
+               hardware level, so a "set"/"reset" bit sitting there for an off slot is the
+               expected, harmless resting state, not a defect (this was incorrectly rejected
+               before Round 8's off-slot support was added, which made every off slot fail). */
+        }
+
+        if (outputCount == 0)
+        {
+            continue; /* valid "off" slot -- nothing driven this cycle (research.md Decision 17) */
+        }
+        if (outputCount != 2 || srcPin < 0 || dstPin < 0 || srcPin == dstPin)
+            return 0;
+    }
+    return 1;
+}
+
+/* Fills cpFrameBuf one full physical row at a time: all CP_COLS (15) LEDs of the current row
+   marked on, every other row off, advancing to the next row each call and wrapping after
+   CP_ROWS (16) (research.md Decision 17 / row-by-row revision). The DMA scanner underneath is
+   completely unaware of this -- it still only ever drives one (src,dst) pin pair at any given
+   instant, exactly as before; marking a whole row "on" here just means the scanner's existing
+   one-at-a-time sweep spends this ~0.5s tick cycling only through that row's 15 slots, so
+   persistence of vision reads it as the row being lit, not 16 pins driven at once. */
+static void ChargePlex_GeneratePattern(void)
+{
+    static int currentRow = 0;
+
+    for (int row = 0; row < CP_ROWS; row++)
+    {
+        uint8_t on = (row == currentRow) ? 1 : 0;
+        for (int col = 0; col < CP_COLS; col++)
+        {
+            cpFrameBuf[row][col] = on;
+        }
+    }
+
+    sprintf(msg, "[CHARLIEPLEX] frame: row %d lit (%d LEDs)\r\n", currentRow, CP_COLS);
+    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+    currentRow = (currentRow + 1) % CP_ROWS;
+}
+
+/* Translates cpFrameBuf into a candidate moder_buf (on slots get their immutable
+   moder_template pattern back; off slots get 0/all-input), validates that candidate in
+   full, and only then commits it over the live moder_buf -- exactly the same fail-safe
+   shape as the boot-time check, applied to every regenerated frame (research.md Decision
+   17). A rejected frame is not a stall (the existing scan is still known-good and keeps
+   running); it just means this particular new frame didn't pass and is discarded. */
+static void ChargePlex_ApplyFrameBuffer(void)
+{
+    for (int row = 0; row < CP_ROWS; row++)
+    {
+        for (int col = 0; col < CP_COLS; col++)
+        {
+            int slot = row * CP_COLS + col; /* matches ChargePlex_BuildScanTable's row-major (src,dst) enumeration exactly */
+            cpCandidateModer[slot] = cpFrameBuf[row][col] ? moder_template[slot] : 0;
+        }
+    }
+
+    if (ChargePlex_ValidateScanTable(cpCandidateModer))
+    {
+        memcpy(moder_buf, cpCandidateModer, sizeof(moder_buf));
+    }
+    else
+    {
+        sprintf(msg, "[CHARLIEPLEX] frame rejected, keeping previous frame\r\n");
+        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
+}
+
+/* Drives every PB pin back to plain input (HiZ) directly via register write,
+   bypassing TIM1/DMA entirely. Deliberately avoids any HAL call that polls against
+   HAL_GetTick() (e.g. HAL_DMA_Abort) -- this can be invoked from SysTick_Handler
+   itself, where the tick is not advancing, so any such call would spin forever
+   instead of completing. */
+static void ChargePlex_ForceSafeState(void)
+{
+    __HAL_TIM_MOE_DISABLE(&htim1);
+    __HAL_TIM_DISABLE(&htim1);
+    hdma_tim1_up.Instance->CCR  &= ~DMA_CCR_EN;
+    hdma_tim1_ch1.Instance->CCR &= ~DMA_CCR_EN;
+    GPIOB->MODER = 0x00000000;
+}
+
+/* Called every 1ms from SysTick_Handler (stm32l4xx_it.c) so stall-detection latency
+   never depends on whatever the main loop happens to be blocked in (HAL_Delay,
+   blocking UART/SPI transfers, etc). Compares each DMA channel's remaining-transfer
+   counter against the value read on the *previous* 1ms tick: at the real scan rate
+   (~80MHz/2776 =~ 28.8 kHz/slot) the counter advances by roughly 28 of its 240
+   states every millisecond, so an unchanged reading one tick later means the scan
+   has stalled -- and with no series resistors on this board, a stalled scan means
+   whatever pin pair was active is now driven continuously instead of multiplexed. */
+void ChargePlex_CheckAlive(void)
+{
+    static uint32_t lastUp  = 0xFFFFFFFFUL; /* sentinel: no prior sample yet */
+    static uint32_t lastCh1 = 0xFFFFFFFFUL;
+
+    if (chargePlexFaulted || !chargePlexScanStarted) return;
+
+    uint32_t up  = __HAL_DMA_GET_COUNTER(&hdma_tim1_up);
+    uint32_t ch1 = __HAL_DMA_GET_COUNTER(&hdma_tim1_ch1);
+
+    if (lastUp != 0xFFFFFFFFUL && (up == lastUp || ch1 == lastCh1))
+    {
+        chargePlexFaulted = 1;
+        ChargePlex_ForceSafeState();
+    }
+
+    lastUp  = up;
+    lastCh1 = ch1;
 }
 /* USER CODE END 0 */
 
@@ -191,8 +435,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   sprintf(msg, "\r\n>>> BUILD MARKER: AXELOR-001 <<<\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
@@ -200,6 +446,30 @@ int main(void)
   HAL_Delay(100); // MPU-6500 register read/write start-up time
   MPU6500_ReadWhoAmI();
   MPU6500_Init();
+
+  ChargePlex_BuildScanTable();
+  if (!ChargePlex_ValidateScanTable(moder_buf))
+  {
+      sprintf(msg, "[CHARLIEPLEX] FAULT: scan table failed self-check -- matrix NOT started\r\n");
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+      chargePlexFaulted = 1;
+      chargePlexFaultReported = 1;
+      ChargePlex_ForceSafeState(); /* belt-and-suspenders: PB pins should already be input from MX_GPIO_Init */
+  }
+  else
+  {
+      sprintf(msg, "[CHARLIEPLEX] scan table OK (240/240 slots), starting matrix scan\r\n");
+      HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+      __HAL_TIM_MOE_ENABLE(&htim1);
+      HAL_DMA_Start(&hdma_tim1_ch1, (uint32_t)bsrr_buf, (uint32_t)&GPIOB->BSRR, CP_SLOT_COUNT);
+      HAL_DMA_Start(&hdma_tim1_up, (uint32_t)moder_buf, (uint32_t)&GPIOB->MODER, CP_SLOT_COUNT);
+      HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_1);
+      __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_CC1);
+      __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
+      HAL_TIM_Base_Start(&htim1);
+      chargePlexScanStarted = 1; /* only now is it safe for ChargePlex_CheckAlive to read the DMA counters */
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -209,6 +479,22 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if (chargePlexFaulted && !chargePlexFaultReported)
+    {
+        sprintf(msg, "[CHARLIEPLEX] FAULT: scan stalled -- matrix forced to safe input state\r\n");
+        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+        chargePlexFaultReported = 1;
+    }
+    else if (!chargePlexFaulted)
+    {
+        /* Reuses this existing ~500ms tick as the pattern-refresh cadence (research.md
+           Decision 17) -- deliberately not a new timer/ISR. Skipped once faulted: TIM1/DMA
+           are already stopped by ChargePlex_ForceSafeState, so there is nothing left to
+           apply a new frame to. */
+        ChargePlex_GeneratePattern();
+        ChargePlex_ApplyFrameBuffer();
+    }
+
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
     blinkCounter++;
     sprintf(msg, "Counter: %lu\r\n", blinkCounter);
@@ -310,6 +596,85 @@ static void MX_SPI1_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 2775;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 2625;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -345,6 +710,25 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -359,6 +743,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
@@ -379,6 +764,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB0 PB1 PB2 PB10
+                           PB11 PB12 PB13 PB14
+                           PB15 PB3 PB4 PB5
+                           PB6 PB7 PB8 PB9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_10
+                          |GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14
+                          |GPIO_PIN_15|GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5
+                          |GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

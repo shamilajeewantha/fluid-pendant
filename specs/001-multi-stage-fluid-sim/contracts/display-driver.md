@@ -31,3 +31,17 @@
 - On-hardware check (per constitution Development Workflow): boot, observe that a known test
   pattern lights the correct 16x15 cells with no ghosting between adjacent charlieplex pairs,
   measure actual refresh rate.
+
+## Round 8 status (2026-06-22, research.md Decision 17)
+
+The DMA scan mechanism itself (this contract's core requirement) is implemented and confirmed
+working on real hardware. What's still a placeholder is the *input* side: there is no real
+`DisplayFrame` yet (the physics core isn't ported onto this board), so `axelor` now has a
+firmware-local `AxelorFrameBuffer` (data-model.md) filled by a deterministic placeholder pattern
+generator instead, refreshed every ~0.5s and translated into `moder_buf` only. The `LedMatrixAddressing`
+mapping this contract requires (`DisplayFrame` index → physical pin pair) is also still open — the
+placeholder pattern is deliberately defined in raw slot-index order rather than real (row, col)
+positions, specifically because that mapping isn't known yet (see research.md Decision 17's
+rationale). Swapping the pattern generator for a real `DisplayFrame` producer later should be a
+drop-in replacement at the frame-buffer boundary; the `LedMatrixAddressing` mapping still needs to
+be resolved before that swap can mean anything geometrically.

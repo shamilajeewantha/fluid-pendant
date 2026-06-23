@@ -9,12 +9,13 @@ description: "Task list for Multi-Stage Fluid Simulation Pendant"
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md (all present)
 
-**Scope of this task list**: **Stage 1 (browser prototype) and Stage 2 (Windows simulator) only.**
-Stage 3 (the STM32 firmware project) is explicitly deferred — the user will initiate that
-STM32CubeIDE project themselves as a separate, later phase. Stage 3 design work already done
-(research.md Decisions 4–6, data-model.md, contracts/display-driver.md, contracts/sensor-driver.md)
-is kept as forward reference; the tasks that would implement it are listed in the **Deferred**
-section at the end of this file for re-scoping later, but are NOT part of this execution pass.
+**Scope of this task list**: Stage 1 (browser prototype) and Stage 2 (Windows simulator), **plus
+Stage 3 Round 8** — two narrow, explicitly-scoped pieces of firmware bring-up in
+`stm_projects/axelor` (accel telemetry print, and a periodically-refreshing placeholder display
+pattern decoupled from the DMA scan; research.md Decisions 16–17). Physics-core integration (the
+rest of Stage 3 — porting `flip_fluid.c`/etc., a real `DisplayFrame` producer, the
+slot→(row,col) mapping) remains deferred; those tasks are listed in the **Deferred** section at
+the end of this file for re-scoping later, but are NOT part of this execution pass.
 
 **Canonical source location**: `final_project/flip_sim_js/` and `final_project/flip_sim_c/`. The
 byte-identical duplicates at the repo root (`flip_sim_js/`, `flip_sim_c/`) are intentionally left
@@ -32,7 +33,8 @@ modifying any existing source file (only new `Dockerfile`s are added):
 validation instead uses the manual scenarios already defined in `quickstart.md`.
 
 **Organization**: Tasks are grouped by user story (US1 = browser prototype, US2 = Windows
-simulator) per spec.md's priorities (P1, P2).
+simulator, US3 = motion-reactive pendant) per spec.md's priorities (P1, P2, P3). Round 8's tasks
+are filed under US3 as preliminary bring-up steps toward that story — they do not complete it.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -588,13 +590,129 @@ function).
 
 ---
 
-## Deferred — Stage 3 (Firmware), NOT part of this execution pass
+### Phase 12: User Story 3 (Motion-Reactive Pendant) — Round 8a: Accel telemetry
 
-The user will initiate the STM32CubeIDE project themselves as a separate, later phase. The task
-breakdown below reflects the Stage 3 design already captured in research.md/data-model.md/
+**Goal**: Verify, over UART, that the MPU-6500 accel reading converts correctly into the exact unit
+(`m/s²`) the simulation will eventually need — with zero simulation code involved yet.
+
+**Independent test**: Flash `stm_projects/axelor`, open a serial terminal at 115200 baud, tilt the
+board in each of the four in-plane directions, and confirm the new `m/s²` line's sign and magnitude
+track each tilt correctly — independently verifiable with no other Round 8 piece in place.
+
+**All file paths below are under `stm_projects/axelor/` only, per explicit user instruction.**
+
+- [x] T078 [US3] In `Core/Src/main.c`'s `MPU6500_ReadAccel()`, add `accelX_mps2`/`accelY_mps2`/
+  `accelZ_mps2` (`float`, `= (accel*_mg / 1000.0f) * 9.81f`) and extend the existing `[ACCEL]`
+  `sprintf`/`HAL_UART_Transmit` call to also print these three values, alongside (not replacing)
+  the existing raw/mg print (research.md Decision 16, data-model.md `AccelTelemetry`). Do not read
+  or write any `Scene`/`FlipFluid` field — no such field exists in this project yet. — *printed as
+  integer milli-(m/s²) (`accelX_mmps2` etc.), matching this file's existing float-in-printf
+  avoidance convention (see the pre-existing mg-conversion comment); the underlying `accelX_mps2`
+  float is computed and available, only the print stays integer-only*
+- [ ] T079 [US3] Build `stm_projects/axelor` in STM32CubeIDE and confirm zero new
+  warnings/errors (depends on T078) — *needs your build; not yet confirmed*
+- [ ] T080 [US3] Manually validate per `quickstart.md`'s Round 8 check 1: with the board flashed
+  and a serial terminal open, confirm the new `m/s²` line appears every existing ~500ms tick, reads
+  close to 9.81 on whichever axis is currently "down" and near 0 on the others at rest, and tilting
+  each of the four in-plane directions changes sign/magnitude consistently (depends on T079) —
+  *needs your hardware/eyes; not yet confirmed*
+
+**Checkpoint**: The accel-to-`m/s²` conversion is verified correct on real hardware via UART, with
+the axis/sign mapping for this board's physical MPU-6500 orientation now known empirically.
+
+---
+
+### Phase 13: User Story 3 — Round 8b: Refreshing placeholder display pattern
+
+**Goal**: Replace the current "all 240 slots on, forever" bring-up pattern with a buffer-driven,
+periodically-refreshing pattern — exercising the same buffer-to-DMA-table path a real `DisplayFrame`
+will use later — without touching the DMA scan mechanism itself or weakening any existing safety
+check.
+
+**Independent test**: Flash `stm_projects/axelor` (with or without Phase 12 done — different
+functions, no shared state) and confirm the LED matrix visibly changes pattern roughly every 0.5s,
+with no `[CHARLIEPLEX] FAULT` lines over UART during normal operation.
+
+**All file paths below are under `stm_projects/axelor/` only.**
+
+- [x] T081 [US3] In `Core/Src/main.c`'s `ChargePlex_ValidateScanTable()`, relax the per-slot check
+  to accept **either** zero output pins (a valid "off" slot) **or** the existing exactly-one-
+  source-high/one-sink-low rule (a valid "on" slot) — any other pattern (1 output, 3+ outputs, or
+  2 outputs that aren't one set/one reset) still fails the whole table, unchanged (research.md
+  Decision 17) — *implemented by adding an `outputCount == 0` early-accept branch; also required
+  changing the function's signature to take a `const uint32_t *moderToCheck` parameter (see T083) so
+  it can validate a not-yet-live candidate buffer, not just the global `moder_buf`*
+  — ***bug found and fixed post-implementation***: the original first pass kept the pre-existing
+  "input pin carrying a stray pre-armed level → reject" check, which is wrong once slots can be
+  toggled off — `bsrr_buf` is immutable and permanently holds each slot's 2 designated pins
+  regardless of on/off state, so *every* off slot's own pins legitimately show a "stray" bit and
+  got rejected, meaning `ChargePlex_ApplyFrameBuffer` rejected every generated frame and the
+  display silently stayed on its boot-time all-240-on state forever (reported by the user as
+  "lights still look always lit"). Fixed by removing that check entirely — an input pin is
+  electrically disconnected from `BSRR`/`ODR` at the hardware level, so there is nothing to
+  validate there regardless of what `bsrr_buf` contains.
+- [x] T082 [US3] Add `static uint8_t cpFrameBuf[CP_SLOT_COUNT];` and a
+  `ChargePlex_GeneratePattern()` function implementing the sweeping-window pattern: one persisted
+  `int` offset, a fixed window width `K` and step size (tune empirically once on hardware), marking
+  slots `[offset, offset+K)` (mod `CP_SLOT_COUNT`) as "on" in `cpFrameBuf` and advancing `offset` by
+  the step amount each call (depends on T081) — *implemented as `CP_PATTERN_WINDOW=24`,
+  `CP_PATTERN_STEP=7` (tuning knobs, not fixed)*
+- [x] T083 [US3] Add `ChargePlex_ApplyFrameBuffer()`: build a candidate `moder_buf` from
+  `cpFrameBuf` (on slots keep their existing `bsrr_buf`-matching pin-pair `moder` encoding from
+  `ChargePlex_BuildScanTable`; off slots get `moder = 0`), run it through
+  `ChargePlex_ValidateScanTable()`, and only `memcpy` it over the live `moder_buf` if validation
+  passes; on failure, leave the live `moder_buf` untouched and print a
+  `[CHARLIEPLEX] frame rejected, keeping previous frame` UART line instead of calling
+  `ChargePlex_ForceSafeState()` (a rejected *new* frame is not the same fault class as a *stalled*
+  scan — the existing scan is still known-good and should keep running) (depends on T082) —
+  *implementation note beyond the original task description: discovered that reading the "on"
+  pattern from the live `moder_buf` (as originally planned) would break once a slot had ever been
+  turned off, since `moder_buf` itself gets zeroed for off slots — fixed by adding a separate,
+  never-mutated `moder_template[CP_SLOT_COUNT]` (populated once by `ChargePlex_BuildScanTable`)
+  that `ChargePlex_ApplyFrameBuffer` reads from instead, so a slot's pin-pair identity survives
+  being turned off and back on*
+- [x] T084 [US3] In `main()`'s existing `while(1)` body, call `ChargePlex_GeneratePattern()` then
+  `ChargePlex_ApplyFrameBuffer()` once per existing ~500ms loop iteration — reuse the loop's
+  existing cadence, do not add a new timer/ISR (depends on T083) — *guarded by
+  `!chargePlexFaulted` (skipped once `ChargePlex_ForceSafeState` has already stopped TIM1/DMA —
+  nothing left to apply a new frame to)*
+- [ ] T085 [US3] Build `stm_projects/axelor` and confirm zero new warnings/errors (depends on T084)
+  — *needs your build; not yet confirmed*
+- [ ] T086 [US3] Manually validate per `quickstart.md`'s Round 8 check 2: confirm the matrix shows
+  a visibly changing pattern roughly every 0.5s (not the prior static all-on pattern), confirm no
+  `[CHARLIEPLEX] FAULT` or `frame rejected` lines during normal operation, and confirm bench-supply
+  current-limit precautions are still in place for this test per the existing no-resistor
+  constraint (depends on T085) — *needs your hardware/eyes; not yet confirmed*
+
+**Checkpoint**: The matrix shows a deterministic, refreshing pattern through the new frame-buffer
+path; the DMA scan mechanism and its existing stall watchdog are both unchanged and unaffected.
+
+---
+
+### Phase 14: Polish — Round 8
+
+- [x] T087 Confirm `blinkCounter`'s increment/print, both `MPU6500_ReadWhoAmI()`/`MPU6500_Init()`
+  startup calls, `MPU6500_ReadAccel()`'s existing raw/mg print, and the `BUILD MARKER` line are all
+  still present and unmodified in `stm_projects/axelor/Core/Src/main.c` — Round 8 only adds code,
+  per the established constraint for this file (depends on T080, T086) — *confirmed via full-file
+  re-read: all listed items present and unmodified at their original lines; this check doesn't
+  itself require T080/T086's on-hardware confirmation, only that the source wasn't altered*
+
+**Checkpoint**: Round 8 complete — accel telemetry verified in the right units, a refreshing
+placeholder pattern replaces the static bring-up pattern, and all pre-existing axelor functionality
+is confirmed intact.
+
+---
+
+## Deferred — Stage 3 (Firmware) physics-core integration, NOT part of this execution pass
+
+Round 8 (Phases 12–14 above) already covers accel telemetry and a placeholder display pattern in
+`stm_projects/axelor`. What remains deferred is everything that requires the actual physics core.
+The task breakdown below reflects the Stage 3 design already captured in research.md/data-model.md/
 contracts/, kept here only so that future phase has a ready starting point to re-scope (e.g. the
 file paths and the "new project" assumption should be re-checked against whatever the user has
-actually set up by then) — **do not execute these now**.
+actually set up by then — `axelor` already exists and is not a new project, unlike the original
+forward-reference design below assumed) — **do not execute these now**.
 
 - Create the new STM32CubeIDE project (cloned from `stm_projects/axelor`) with `Core/Src/physics/`, `Core/Src/display/`, `Core/Src/sensor/` subdirectories
 - Copy `flip_fluid.c`/`.h`, `flip_utils.c`/`.h`, `scene.c`/`.h` verbatim (no STM32 HAL includes) from `final_project/flip_sim_c/` into the new project's `Core/Src/physics/` / `Core/Inc/physics/`, per `contracts/physics-core.md`

@@ -42,3 +42,13 @@ part was corrected from the originally-assumed ADXL362 to the MPU-6500 during pl
 - Confirm measured supply current in Low-Power Accelerometer Mode is in line with the part's
   documented `6.9 + ODR × 0.376` µA model (constitution: power consumption MUST be validated on
   real hardware, not assumed from the datasheet alone).
+
+## Round 8 status (2026-06-22, research.md Decision 16)
+
+The full contract above (interrupt-driven, Low-Power Accelerometer Mode, dead-banded/low-pass
+filtered `MotionInput` output) is **not yet implemented**. What exists today in `axelor` is the
+polled `MPU6500_ReadAccel()` read at the existing 500ms loop tick, now also printing the `m/s²`-
+converted value (data-model.md `AccelTelemetry`) for on-hardware verification — see
+quickstart.md's Round 8 section. This is a UART-observable checkpoint on the way to this contract,
+not a fulfillment of it; the interrupt-driven/low-power/filtered requirements above remain open
+work for whenever physics-core integration begins.
