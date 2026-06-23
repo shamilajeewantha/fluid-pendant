@@ -1113,6 +1113,50 @@ now confirmed correct) matches intuitive "fluid falls down" behavior — is exac
 `quickstart.md` Round 9 checks 2–4 (tilt response, settling, shake stability) are designed to
 catch, and remains open pending T099/T100's on-hardware run against the now-corrected `main.c`.
 
+## Round 11 — Tilt-to-display latency (2026-06-23)
+
+**Symptom**: tilt-to-visible-LED latency ~3s, vs. spec SC-004's <500ms. Persisted (only "slightly"
+better) after switching Debug (-O0) -> Release (-Os).
+
+**Checked, ruled out**:
+- FPU: already hardware, not software-emulated. `.cproject` has `fpv4-sp-d16` +
+  `floatabi=hard` on both Debug and Release. No change needed.
+- `ChargePlex_ApplyFrameBuffer`/`ValidateScanTable`: O(240 slots x 16 pins) bitwise checks per
+  tick — microseconds, not the bottleneck. Untouched either way (safety-critical, frozen).
+- UART prints: already gated (every 25th tick), not unconditional.
+- `MPU6500_ReadAccel`: one 7-byte blocking SPI transfer per tick, no added delay.
+
+**Root cause (architectural, not a single hotspot)**: `main.c`'s loop computed `dt` as a fixed
+0.02f (assumes exactly 20ms/tick) but called `HAL_Delay(20)` *after* all per-tick compute — so
+real tick time = compute time + 20ms, while the physics was only ever told 20ms passed. Any
+per-tick compute cost (whatever its size) silently became slow-motion drift between simulated
+time and real time, compounding every tick. Exact compute cost wasn't isolated by code reading
+alone (algorithm complexity looks small — ~289 grid cells x 20 pressure iters, 323 particles —
+not obviously seconds-scale), but the fix doesn't require knowing it.
+
+**Decision**: make `dt` self-correcting and remove the artificial delay, instead of chasing the
+exact hotspot.
+- `dt` per tick = measured wall-clock delta (`HAL_GetTick()`, 1ms resolution) since the previous
+  tick, clamped to `[0.001f, 0.04f]` s (`MIN_DT_S`/`MAX_DT_S`, board-specific glue in `main.c`,
+  same pattern as `MAX_GRAVITY_MPS2`). Lower bound avoids dt=0 on a same-millisecond tick; upper
+  bound caps solver instability if one tick stalls (e.g. a UART print). Passed directly into
+  `simulateFlipFluid` in place of `axelorScene.dt`; `scene.c`'s `dt` field is untouched (still the
+  20ms reference value Stage 1/2 validated against).
+- `HAL_Delay(20)` removed from the loop tail — loop runs back-to-back as fast as compute allows,
+  per explicit user request. Safe because `ChargePlex`'s scan is TIM1+DMA-driven, fully decoupled
+  from main-loop rate (`contracts/display-driver.md`) — no charlieplex code, call site, or call
+  rate changes.
+- Print throttling (`MPU6500_ReadAccel`'s two prints + the `Counter` print) switched from
+  iteration-count-based (`printTick % 25`) to elapsed-time-based (`HAL_GetTick()` delta >= 500ms).
+  Iteration-count throttling assumed ~20ms/iteration; at the now-variable, likely much faster loop
+  rate it would otherwise print far more often than intended, reintroducing blocking UART time.
+- No regression to the constitution's already-logged no-sleep-mode gap (Complexity Tracking):
+  `HAL_Delay` was already a busy-wait (no WFI), so the CPU was already 100% busy during it: removing
+  it doesn't change power posture, just removes dead time.
+
+Build-verified: 0 errors, 0 warnings, both configs. On-hardware re-test of tilt latency is a new
+task (see tasks.md).
+
 ## Summary of resolved unknowns (Round 9 additions)
 
 | Unknown | Resolution |

@@ -136,6 +136,18 @@ setup are all **unmodified** by this round — the real simulation is held to ex
 already proved out, per this board's standing no-current-limiting-resistor constraint. All edits
 remain confined to `stm_projects/axelor`.
 
+**Round 10 (2026-06-23, on-hardware row/column + gravity-axis fixes)**: row/column scrambling
+traced to a board wiring defect (user-fixed; firmware compensation retracted). Gravity-axis swap
+(accelX/Y feed the wrong `simulateFlipFluid` parameter for this board's mounting) fixed in
+`main.c`. See research.md Round 10.
+
+**Round 11 (2026-06-23, tilt-to-display latency)**: ~3s latency (spec SC-004: <500ms) traced to a
+fixed `dt=0.02f` assumption plus an unconditional `HAL_Delay(20)` added *after* per-tick compute,
+so simulated time silently fell behind real time. Fixed: `dt` now measured per tick via
+`HAL_GetTick()`, clamped `[0.001f, 0.04f]`s; fixed delay removed (loop runs at compute speed);
+print throttling switched from iteration-count to elapsed-time-based. No charlieplex code touched.
+See research.md Round 11.
+
 ## Technical Context
 
 **Language/Version**: C11 for all three stages' simulation/firmware code; vanilla JavaScript

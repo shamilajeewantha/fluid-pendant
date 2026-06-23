@@ -891,6 +891,28 @@ contracts accurately describe the as-built state.
 
 ---
 
+### Phase 18: Round 10 — row/column wiring + gravity-axis fixes
+
+- [x] T103 Row/column scrambling traced to a board wiring defect, not firmware — fixed by user on
+  hardware; firmware compensation (offset+reversal+mirror) retracted from `main.c`, back to direct
+  `cellColor`->`cpFrameBuf` mapping. research.md Round 10 Pass 1-3.
+- [x] T104 Gravity-axis swap: `accelX_mps2`/`accelY_mps2` feed the wrong `simulateFlipFluid`
+  parameter for this board's MPU mounting (confirmed via 90° rotation test). Fixed by swapping the
+  two in `main.c`. Build-verified 0 errors/0 warnings. research.md Round 10 Pass 4.
+
+### Phase 19: Round 11 — tilt-to-display latency
+
+- [x] T105 Root cause: fixed `dt=0.02f` + unconditional `HAL_Delay(20)` after compute meant
+  simulated time drifted behind real time. Fixed: `dt` measured per tick via `HAL_GetTick()`,
+  clamped `[MIN_DT_S, MAX_DT_S]`=`[0.001f, 0.04f]`; fixed delay removed; print throttle switched
+  iteration-count -> elapsed-time. No charlieplex code touched. Build-verified 0 errors/0 warnings,
+  both configs (Release: text=24544 data=112 bss=32648). research.md Round 11.
+- [ ] T106 [US3] On-hardware: confirm tilt-to-visible-LED latency now meets spec SC-004 (<500ms),
+  and confirm no `[CHARLIEPLEX] FAULT`/rejected-frame lines appear at the new, faster loop rate
+  (depends on T105) — *needs your hardware/eyes; not yet confirmed*
+
+---
+
 ## Deferred — Stage 3 (Firmware) remaining work, NOT part of this execution pass
 
 Rounds 8–9 (Phases 12–17 above) now cover accel telemetry, a real ported physics core, and the

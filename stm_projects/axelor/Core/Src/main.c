@@ -120,11 +120,26 @@ static inline float ClampGravityMps2(float v)
     return v;
 }
 
-/* Shared by the Counter print and MPU6500_ReadAccel's own prints below -- incremented once per
-   ~20ms main-loop iteration so all of them stay throttled to roughly the same ~500ms cadence
-   they printed at before the loop sped up (research.md Decision 21), without each call site
-   incrementing it independently. */
-static uint32_t printTick = 0;
+/* Round 11: dt is now this tick's measured wall-clock time (HAL_GetTick(), 1ms resolution), not a
+   fixed 0.02f -- the loop no longer sleeps a fixed amount, so a fixed dt would drift from real
+   time by whatever the tick's compute happened to cost (research.md Round 11). Clamped so the
+   solver stays stable if a tick stalls, and to avoid dt<=0 if two ticks land in the same ms. */
+#define MIN_DT_S 0.001f
+#define MAX_DT_S 0.04f
+
+static inline float ClampDtS(float v)
+{
+    if (v < MIN_DT_S) return MIN_DT_S;
+    if (v > MAX_DT_S) return MAX_DT_S;
+    return v;
+}
+
+/* Shared by the Counter print and MPU6500_ReadAccel's own prints below. Round 11: switched from
+   iteration-count throttling (printTick % 25, tuned for the old fixed ~20ms/iteration) to
+   elapsed-time throttling, since the loop no longer has a fixed period -- recomputed once per
+   loop iteration, before MPU6500_ReadAccel() is called. */
+static uint32_t lastPrintMs = 0;
+static uint8_t printGate = 0;
 
 /* USER CODE END PV */
 
@@ -250,7 +265,7 @@ void MPU6500_ReadAccel(void)
     long accelY_mg = ((long)accelY_raw * 1000) / 16384;
     long accelZ_mg = ((long)accelZ_raw * 1000) / 16384;
 
-    if ((printTick % 25) == 0)
+    if (printGate)
     {
         sprintf(msg, "[ACCEL] raw=[%d %d %d] mg=[%ld %ld %ld]\r\n",
                 accelX_raw, accelY_raw, accelZ_raw, accelX_mg, accelY_mg, accelZ_mg);
@@ -264,7 +279,7 @@ void MPU6500_ReadAccel(void)
     accelY_mps2 = (accelY_mg / 1000.0f) * 9.81f;
     accelZ_mps2 = (accelZ_mg / 1000.0f) * 9.81f;
 
-    if ((printTick % 25) == 0)
+    if (printGate)
     {
         // Printed as milli-(m/s^2) integers, same float-in-printf avoidance as the mg line above --
         // the underlying accel*_mps2 floats are the real value driving the simulation; only the
@@ -502,6 +517,11 @@ int main(void)
   }
   /* USER CODE END 2 */
 
+  /* Round 11: tracks real elapsed time between ticks so dt can be measured instead of assumed
+     (research.md Round 11). Initialized right before the loop starts, not at declaration, so the
+     first iteration's delta is near-zero rather than however long boot took. */
+  uint32_t lastTickMs = HAL_GetTick();
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -509,6 +529,14 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    /* Round 11: one HAL_GetTick() read serves both this tick's dt and the print-throttle gate --
+       the loop no longer sleeps a fixed amount, so both must be measured, not assumed. */
+    uint32_t nowMs = HAL_GetTick();
+    float tickDt = ClampDtS((nowMs - lastTickMs) / 1000.0f);
+    lastTickMs = nowMs;
+    printGate = (nowMs - lastPrintMs) >= 500;
+    if (printGate) lastPrintMs = nowMs;
+
     /* Read first so this tick's freshest accel sample drives this tick's simulation step
        below, rather than the previous tick's (research.md Decision 21/22). */
     MPU6500_ReadAccel();
@@ -535,7 +563,7 @@ int main(void)
         float clampedGravityX = ClampGravityMps2(accelY_mps2);
         float clampedGravityY = ClampGravityMps2(accelX_mps2);
 
-        simulateFlipFluid(axelorScene.fluid, axelorScene.dt, clampedGravityX, clampedGravityY,
+        simulateFlipFluid(axelorScene.fluid, tickDt, clampedGravityX, clampedGravityY,
                            axelorScene.flipRatio, axelorScene.numPressureIters,
                            axelorScene.numParticleIters, axelorScene.overRelaxation,
                            axelorScene.compensateDrift, axelorScene.separateParticles);
@@ -555,14 +583,14 @@ int main(void)
 
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
     blinkCounter++;
-    if ((printTick % 25) == 0)
+    if (printGate)
     {
         sprintf(msg, "Counter: %lu\r\n", blinkCounter);
         HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
     }
-    printTick++;
-    /* Matches Scene.dt=0.02f (research.md Decision 21) -- was HAL_Delay(500) through Round 8. */
-    HAL_Delay(20);
+    /* Round 11: no fixed delay -- loop runs at compute speed (research.md Round 11). Safe because
+       ChargePlex's scan is TIM1+DMA-driven, decoupled from main-loop rate; this never changes
+       what's written to cpFrameBuf or how often ChargePlex_ApplyFrameBuffer() is called per tick. */
   }
   /* USER CODE END 3 */
 }
