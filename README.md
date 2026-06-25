@@ -118,6 +118,8 @@ If you want to fabricate this yourself, the order files are here:
   <img src="media/photos/pcb/axelor2.jpg" width="400" height="300" style="object-fit:cover;" />
   <img src="media/photos/pcb/axelor3.jpg" width="400" height="300" style="object-fit:cover;" />
   <img src="media/photos/pcb/axelor4.jpg" width="400" height="300" style="object-fit:cover;" />
+  <img src="media/photos/pcb/axelor7.jpg" width="400" height="300" style="object-fit:cover;" />
+  <img src="media/photos/pcb/axelor9.jpg" width="400" height="300" style="object-fit:cover;" />
 </p>
 
 More build, bring-up, and debugging photos [here](media/photos/).
