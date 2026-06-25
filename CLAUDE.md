@@ -7,8 +7,14 @@ specs/001-multi-stage-fluid-sim/plan.md
 ## Writing style for specs/plans/research/tasks (all files under specs/)
 
 Be concise and precise. No narrative essays, no restating context already in the file,
-no padding. Each round/decision entry: state the symptom, the root cause, and the fix —
+no padding. Each round/decision entry: state the symptom, the root cause, and the fix -
 in that order, as short factual sentences. Cut anything a reader could infer. Prefer a
 terse bullet/table over a prose paragraph when either would do. This applies to every
 file under `specs/` (plan.md, research.md, tasks.md, contracts/, data-model.md,
-quickstart.md) — verbose entries waste tokens on every future read AND every future edit.
+quickstart.md) - verbose entries waste tokens on every future read AND every future edit.
+
+## Punctuation: no em dashes
+
+Never use the em dash character (—) anywhere in this project - not in code, comments,
+commit messages, README, or any file under `specs/`. Use a plain hyphen (-) instead.
+This applies project-wide, not just to `specs/`.

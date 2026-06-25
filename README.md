@@ -1,9 +1,9 @@
 # Fluid Simulator
 
-A little device that shows a liquid sloshing around on its own glowing display. Tilt it,
-shake it, or set it down, and the "water" inside flows, sways, and settles just like the
-real thing. It charges over USB and runs for a long time on its battery, so it's always
-ready to just pick up and play with.
+A standalone device that simulates fluid motion in real time and displays it on a custom
+LED matrix. A built-in motion sensor detects how the device is tilted or moved, and feeds
+that directly into the simulation as gravity, so the displayed fluid responds accordingly.
+Powered over USB-C with an internal rechargeable battery.
 
 <p align="center">
   <img src="media/photos/pcb/simulation.jpg" width="400" height="300" style="object-fit:cover;" alt="Fluid simulation running on the device" />
@@ -16,8 +16,6 @@ ready to just pick up and play with.
 - [Prototyping](#prototyping)
 - [PCB](#pcb)
 - [STM32 Firmware](#stm32-firmware)
-- [Hardware](#hardware)
-- [Photos](#photos)
 - [Acknowledgments](#acknowledgments)
 - [License](#license)
 
@@ -25,10 +23,10 @@ ready to just pick up and play with.
 
 This project went through four stages, in this order:
 
-- **Simulation** — building and optimizing the fluid physics in software, first.
-- **Prototyping** — proving the display and wiring techniques on off-the-shelf dev boards.
-- **PCB** — designing the real, purpose-built circuit board.
-- **STM32 Firmware** — running the simulation on that real board.
+- **Simulation** - building and optimizing the fluid physics in software, first.
+- **Prototyping** - proving the display and wiring techniques on off-the-shelf dev boards.
+- **PCB** - designing the real, purpose-built circuit board.
+- **STM32 Firmware** - running the simulation on that real board.
 
 ## Simulation
 
@@ -40,7 +38,7 @@ build/run commands.
   <img src="media/photos/simlators/web_simulator.png" width="400" height="300" style="object-fit:cover;" alt="Web simulator screenshot" />
 </p>
 
-- **[Web Simulator](simulators/web_simulator/)** — JavaScript browser prototype, based on
+- **[Web Simulator](simulators/web_simulator/)** - JavaScript browser prototype, based on
   [Matthias Müller's tenMinutePhysics FLIP tutorial](https://matthias-research.github.io/pages/tenMinutePhysics/18-flip.html).
   The main change from his original: this renders the simulation as a grid of blocks (matching
   the final LED matrix), not individual particles drawn on screen.
@@ -49,10 +47,10 @@ build/run commands.
   <img src="media/photos/simlators/windows_simulator.png" width="400" height="300" style="object-fit:cover;" alt="Windows simulator screenshot" />
 </p>
 
-- **[Windows Simulator](simulators/windows_desktop_simulator/)** — C port of the same
+- **[Windows Simulator](simulators/windows_desktop_simulator/)** - C port of the same
   physics core, rendered at the final 16x15 grid resolution. Built with MinGW, or via
   Docker if you don't have MinGW installed. This C code is directly reusable on the STM32
-  firmware unmodified, by design — so the simulation logic itself never has to be debugged
+  firmware unmodified, by design - so the simulation logic itself never has to be debugged
   on the microcontroller.
 
 ## Prototyping
@@ -72,7 +70,7 @@ off-the-shelf dev boards.
   <img src="media/photos/prototype/nucleo_charlieplex.png" width="400" height="300" style="object-fit:cover;" alt="Nucleo board driving a charlieplexed LED test" />
 </p>
 
-- **NUCLEO-L432KC** used to prototype charlieplexing itself — notoriously fiddly wiring.
+- **NUCLEO-L432KC** used to prototype charlieplexing itself - notoriously fiddly wiring.
   A simple 3-pin, 6-LED charlieplex, scanned via DMA.
 
 ## PCB
@@ -90,7 +88,7 @@ Key components (full BOM [here](pcb/jlc_order/axelor_pcb-BOM.csv)):
 
 | Ref | Part | Role |
 |---|---|---|
-| U3 | STM32L431CCT6 | MCU — Cortex-M4, 256KB flash |
+| U3 | STM32L431CCT6 | MCU - Cortex-M4, 256KB flash |
 | U4 | MPU-6500 | 3-axis accelerometer/gyro (I2C) |
 | U2 | TPS7A0233PDBVR | 3.3V LDO regulator |
 | U1 | MCP73832T-2ACI/OT | Li-ion/Li-poly charge controller |
@@ -108,68 +106,58 @@ projects), and the top half is just the LED matrix, which stacks on top of the b
   <img src="media/photos/altium/pcb_3d.png" width="400" height="300" style="object-fit:cover;" alt="PCB 3D render" />
 </p>
 
-- **[Altium Project](pcb/altium_project/)** — Altium Designer project (schematic + PCB
+- **[Altium Project](pcb/altium_project/)** - Altium Designer project (schematic + PCB
   layout), packaged with Altium's Project Packager.
 
 ### JLC Order
 
 If you want to fabricate this yourself, the order files are here:
 
-- **[JLC Order](pcb/jlc_order/)** — Gerbers, BOM, and CPL files as submitted to JLCPCB.
+- **[JLC Order](pcb/jlc_order/)** - Gerbers, BOM, and CPL files as submitted to JLCPCB.
 
 ### Fabricated Board
 
 <p align="center">
-  <img src="media/photos/pcb/two_pieces.jpg" width="400" height="300" style="object-fit:cover;" alt="The PCB cut into its two separable halves" />
-</p>
-
-The two halves, cut apart and separable, as designed above.
-
-## STM32 Firmware
-
-- **[STM32 Project](stm_project/axelor/)** — STM32CubeIDE project for the Axelor board
-  (STM32L431CCTx). Reads the onboard accelerometer and drives the simulation's physics core
-  — unmodified in behavior from the Windows simulator — onto the real charlieplexed LED
-  matrix.
-
-## Hardware
-
-- MCU: STM32L431CCTx (STM32L4 series, Cortex-M4, 256KB flash)
-- Display: 16-row x 15-column charlieplexed LED matrix (240 LEDs)
-- Sensor: MPU-6500 accelerometer/gyro, used as the simulation's gravity vector
-- Power: USB-C input, MCP73832 Li-ion charger, TPS7A02 3.3V LDO rail
-
-## Photos
-
-<p align="center">
   <img src="media/photos/pcb/axelor1.jpg" width="400" height="300" style="object-fit:cover;" />
-  <img src="media/photos/pcb/axelor5.jpg" width="400" height="300" style="object-fit:cover;" />
-  <img src="media/photos/pcb/axelor9.jpg" width="400" height="300" style="object-fit:cover;" />
-  <img src="media/photos/pcb/flashing.jpg" width="400" height="300" style="object-fit:cover;" />
+  <img src="media/photos/pcb/axelor2.jpg" width="400" height="300" style="object-fit:cover;" />
+  <img src="media/photos/pcb/axelor3.jpg" width="400" height="300" style="object-fit:cover;" />
+  <img src="media/photos/pcb/axelor4.jpg" width="400" height="300" style="object-fit:cover;" />
 </p>
 
 More build, bring-up, and debugging photos [here](media/photos/).
+
+## STM32 Firmware
+
+- **[STM32 Project](stm_project/axelor/)** - STM32CubeIDE project for the Axelor board
+  (STM32L431CCTx). Reads the onboard accelerometer and drives the simulation's physics core
+  - unmodified in behavior from the Windows simulator - onto the real charlieplexed LED
+  matrix.
+
+<p align="center">
+  <img src="media/photos/pcb/flashing.jpg" width="400" height="300" style="object-fit:cover;" /><br/>
+  <img src="media/gif/simulation.gif" width="400" height="300" style="object-fit:cover;" />
+</p>
 
 ## Acknowledgments
 
 - **[mitxela's "Fluid Simulation Pendant"](https://mitxela.com/projects/fluid-pendant)**
   ([Hackaday writeup](https://hackaday.com/2025/01/13/fluid-simulation-pendant-teaches-lessons-in-miniaturization/),
-  [Hackaday.io](https://hackaday.io/project/205649-fluid-simulation-pendant)) — the direct
+  [Hackaday.io](https://hackaday.io/project/205649-fluid-simulation-pendant)) - the direct
   inspiration for this project's overall architecture (FLIP simulation + charlieplexed
-  matrix + accelerometer, on the same STM32L4 family). This board is **not** a clone of his —
+  matrix + accelerometer, on the same STM32L4 family). This board is **not** a clone of his -
   several deliberate departures from his exact build:
   - **Two rectangular boards instead of one round one.** A single round PCB at his size/layer
     count is expensive to fabricate; splitting into a rectangular main board + a separate LED
     matrix board, and dropping the round pendant shape, kept cost and complexity down.
   - **USB-C charging + a standard battery connector**, instead of coin-cell support.
-  - **STM32L431CC instead of his STM32L432KC** — more GPIO means the whole LED matrix can be
+  - **STM32L431CC instead of his STM32L432KC** - more GPIO means the whole LED matrix can be
     driven from a single GPIO port group (all of `PB`), and it's cheaper to assemble on JLCPCB.
-  - **MPU-6500 instead of an ADXL362** — lower power, cheaper part, and fewer assembly
+  - **MPU-6500 instead of an ADXL362** - lower power, cheaper part, and fewer assembly
     requirements on JLCPCB, so assembly cost is lower too.
   - **Extra GPIO broken out on headers** that his design doesn't expose, so this board can be
     reused on other projects.
 - **[Matthias Müller's tenMinutePhysics FLIP tutorial](https://matthias-research.github.io/pages/tenMinutePhysics/18-flip.html)**
-  — the FLIP/PIC algorithm this project's `flip_fluid.c`/`flip.js` are ported from.
+  - the FLIP/PIC algorithm this project's `flip_fluid.c`/`flip.js` are ported from.
 - Select component footprints/3D models sourced from **SnapEDA**.
 
 ## License
