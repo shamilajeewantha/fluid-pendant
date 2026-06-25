@@ -1,57 +1,117 @@
-# fluid-pendant
+# Fluid Simulator
 
-A captivating fluid simulation designed to be displayed on an LED panel.
+A real-time FLIP/PIC fluid simulation, ported from browser, to desktop, to bare-metal
+firmware, that reacts to how you tilt or move the device — an onboard accelerometer drives
+simulated gravity, and the result is rendered live on a 16-row x 15-column charlieplexed
+LED matrix.
 
-## How to Use
+<p align="center">
+  <img src="media/photos/altium/pcb_3d_angled.png" width="320" alt="Axelor PCB 3D render" />
+  <img src="media/gif/simulation_gif.gif" width="320" alt="Fluid simulation demo" />
+</p>
 
-1.  **Start the HTTP Server:** Navigate to the root directory of this project in your terminal and run the following command:
-    ```bash
-    python -m http.server 8000
-    ```
-    This will start a simple web server, making the simulation accessible through your web browser.
+## Contents
 
-2.  **View Simulations:**
+- [About](#about)
+- [Simulation](#simulation)
+- [PCB](#pcb)
+- [STM32 Firmware](#stm32-firmware)
+- [Hardware](#hardware)
+- [Photos](#photos)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
 
-    * **Normal Simulation and Grid (Side-by-Side):** Open your web browser and go to the following address. Scroll down to see both the regular simulation and its underlying grid representation:
-        ```
-        http://localhost:8000/flip_simple.html
-        ```
+## About
 
-    * **Grid-Only Simulation:** To view just the grid-based simulation, open this address in your browser:
-        ```
-        http://localhost:8000/flip_simple_sim.html
-        ```
-        Once loaded, you can control the simulation using the following keys:
-        * **`p`**: Play the simulation.
-        * **`m`**: Pause the simulation.
+This started from a simple question: can the exact same fluid-physics code run identically
+in a browser, on a desktop, and on a microcontroller with no FPU budget to spare? The answer
+shaped the repo — one physics core, three increasingly constrained environments, each one
+validating the next before any soldering happened.
 
-    * **Gravity Control:** In both simulation views, you can dynamically change the direction of gravity. This will alter the orientation and flow of the fluid. Experiment to see the different effects!
+Full spec, design decisions, and round-by-round build history:
+`specs/001-multi-stage-fluid-sim/`.
 
-## Folder Structure
+## Simulation
 
-* **`flip_sim_js/`**: Contains the same core simulation logic as `flip_simple_sim.html`, but organized into separate JavaScript classes. This structure was intended for potential conversion to C and further optimization by removing unnecessary elements.
+The fluid physics is written once and reused, unmodified in behavior, across two software
+stages before it ever touches hardware:
 
-* **`flip_sim_c/`**: Holds the C language version of the fluid simulation, which originated from the JavaScript code in `flip_sim_js/`.
+- **[`simulators/web_simulator/`](simulators/web_simulator/)** — JavaScript browser
+  prototype. Open the HTML file directly, no build step. Fastest loop for tuning physics and
+  visuals.
+- **[`simulators/windows_desktop_simulator/`](simulators/windows_desktop_simulator/)** — C
+  port of the same physics core, rendered at the final 16x15 grid resolution, built with
+  MinGW or Docker. Validates the simulation on a desktop PC before it's ported to the
+  firmware.
 
-* **`sample_c_backend_webapp/`**: This folder represents an initial attempt to automatically convert the JavaScript simulation to C and run it as a web application backend. This approach was not ultimately pursued.
+Each folder has its own README with exact build/run commands.
 
-* **`sample_c_UI/`**: Contains components and code designed to run the fluid simulation as a standalone Windows C application with a graphical user interface.
+## PCB
 
-## Additional Information for Mobile Accelerometer Use (Android)
+Board name: **Axelor**. Designed in Altium Designer — a USB-C powered main board plus a
+diagonally-charlieplexed 16x15 LED matrix board.
 
-You can also control the simulation's gravity using your mobile device's accelerometer for a more interactive experience. Here's how to set it up:
+<p align="center">
+  <img src="media/photos/altium/main_board_sch.png" width="400" alt="Main board schematic" /><br/>
+  <img src="media/photos/altium/led_matrix_sch.png" width="400" alt="LED matrix schematic" /><br/>
+  <img src="media/photos/altium/pcb_2d.png" width="400" alt="PCB 2D layout" />
+  <img src="media/photos/altium/pcb_3d.png" width="400" alt="PCB 3D render" />
+</p>
 
-1.  **Serve `flip_mobile_accelerometer.html` with Ngrok:** First, you need to expose your local server to the internet using Ngrok. If you haven't already, download and install Ngrok. Then, in a new terminal window, run:
-    ```bash
-    ngrok http 8000
-    ```
-    Ngrok will provide you with a temporary public URL (e.g., `https://your-ngrok-url.ngrok-free.app`).
+- **[`pcb/altium_project/`](pcb/altium_project/)** — Altium Designer project (schematic +
+  PCB layout), packaged with Altium's Project Packager.
+- **[`pcb/jlc_order/`](pcb/jlc_order/)** — Gerbers, BOM, and CPL files as submitted to
+  JLCPCB for fabrication.
 
-2.  **Access on Mobile:** Open a **browser other than Chrome** on your Android device and navigate to the HTTPS URL provided by Ngrok for port 8000 (e.g., `https://your-ngrok-url.ngrok-free.app/flip_mobile_accelerometer.html`). Chrome might have issues with accessing device sensors in this context, so try Firefox or another browser.
+Key components (full BOM in [`pcb/jlc_order/axelor_pcb-BOM.csv`](pcb/jlc_order/axelor_pcb-BOM.csv)):
 
-3.  **Test Your Phone's Sensors:** If you're unsure whether your phone's sensors are working correctly, you can visit this helpful website in your mobile browser:
-    [https://sensor-js.xyz/demo.html](https://sensor-js.xyz/demo.html)
+| Ref | Part | Role |
+|---|---|---|
+| U3 | STM32L431CCT6 | MCU — Cortex-M4, 256KB flash |
+| U4 | MPU-6500 | 3-axis accelerometer/gyro (I2C) |
+| U2 | TPS7A0233PDBVR | 3.3V LDO regulator |
+| U1 | MCP73832T-2ACI/OT | Li-ion/Li-poly charge controller |
+| PWR_IN1 | USB Type-C receptacle | Power input |
+| D1-D240 | 0402 blue LEDs | 16x15 charlieplexed display |
 
-    This will allow you to see the data being reported by your device's various sensors.
+## STM32 Firmware
 
-Now you should be able to tilt and move your phone to influence the fluid simulation running in your mobile browser!
+- **[`stm_project/axelor/`](stm_project/axelor/)** — STM32CubeIDE project for the Axelor
+  board (STM32L431CCTx). Reads the onboard accelerometer and drives the simulation's physics
+  core — unmodified in behavior from the Windows simulator — onto the real charlieplexed LED
+  matrix.
+
+## Hardware
+
+- MCU: STM32L431CCTx (STM32L4 series, Cortex-M4, 256KB flash)
+- Display: 16-row x 15-column charlieplexed LED matrix (240 LEDs)
+- Sensor: MPU-6500 accelerometer/gyro, used as the simulation's gravity vector
+- Power: USB-C input, MCP73832 Li-ion charger, TPS7A02 3.3V LDO rail
+
+## Photos
+
+<p align="center">
+  <img src="media/photos/axelor1.jpg" width="200" />
+  <img src="media/photos/axelor5.jpg" width="200" />
+  <img src="media/photos/axelor9.jpg" width="200" />
+  <img src="media/photos/flashing.jpg" width="200" />
+</p>
+
+More build, bring-up, and debugging photos in [`media/photos/`](media/photos/).
+
+## Acknowledgments
+
+- **[mitxela's "Fluid Simulation Pendant"](https://mitxela.com/projects/fluid-pendant)**
+  ([Hackaday writeup](https://hackaday.com/2025/01/13/fluid-simulation-pendant-teaches-lessons-in-miniaturization/),
+  [Hackaday.io](https://hackaday.io/project/205649-fluid-simulation-pendant)) — the direct
+  inspiration for this project's overall architecture (FLIP simulation + charlieplexed
+  matrix + accelerometer, on the same STM32L4 family).
+- **[Matthias Müller's tenMinutePhysics FLIP tutorial](https://matthias-research.github.io/pages/tenMinutePhysics/18-flip.html)**
+  — the FLIP/PIC algorithm this project's `flip_fluid.c`/`flip.js` are ported from.
+- Select component footprints/3D models sourced from **SnapEDA**.
+
+## License
+
+No license has been chosen yet for this repository's own code/hardware design. Bundled
+ST CMSIS/HAL driver files under `stm_project/axelor/Drivers/` retain their own respective
+licenses (see the `LICENSE.txt` files in those folders).
