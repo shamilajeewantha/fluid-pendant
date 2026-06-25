@@ -6,7 +6,7 @@ that directly into the simulation as gravity, so the displayed fluid responds ac
 Powered over USB-C with an internal rechargeable battery.
 
 <p align="center">
-  <img src="media/photos/pcb/simulation.jpg" width="400" height="300" style="object-fit:cover;" alt="Fluid simulation running on the device" />
+  <img src="media/photos/pcb/simulation.jpg" width="400" alt="Fluid simulation running on the device" />
 </p>
 
 ## Overview
