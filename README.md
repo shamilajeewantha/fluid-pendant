@@ -9,16 +9,6 @@ Powered over USB-C with an internal rechargeable battery.
   <img src="media/photos/pcb/simulation.jpg" width="400" height="300" style="object-fit:cover;" alt="Fluid simulation running on the device" />
 </p>
 
-## Contents
-
-- [Overview](#overview)
-- [Simulation](#simulation)
-- [Prototyping](#prototyping)
-- [PCB](#pcb)
-- [STM32 Firmware](#stm32-firmware)
-- [Acknowledgments](#acknowledgments)
-- [License](#license)
-
 ## Overview
 
 This project went through four stages, in this order:
@@ -30,8 +20,8 @@ This project went through four stages, in this order:
 
 ## Simulation
 
-The fluid physics is written once and reused, unmodified in behavior, across two software
-stages before it ever touches hardware. Each folder below has its own README with exact
+The fluid physics was written once and reused, unmodified in behavior, across two software
+stages before it ever touched hardware. Each folder below has its own README with exact
 build/run commands.
 
 <p align="center">
@@ -40,22 +30,22 @@ build/run commands.
 
 - **[Web Simulator](simulators/web_simulator/)** - JavaScript browser prototype, based on
   [Matthias Müller's tenMinutePhysics FLIP tutorial](https://matthias-research.github.io/pages/tenMinutePhysics/18-flip.html).
-  The main change from his original: this renders the simulation as a grid of blocks (matching
-  the final LED matrix), not individual particles drawn on screen.
+  The main change from his original is rendering the simulation as a grid of blocks (matching
+  the final LED matrix), instead of individual particles drawn on screen.
 
 <p align="center">
   <img src="media/photos/simlators/windows_simulator.png" width="400" height="300" style="object-fit:cover;" alt="Windows simulator screenshot" />
 </p>
 
-- **[Windows Simulator](simulators/windows_desktop_simulator/)** - C port of the same
-  physics core, rendered at the final 16x15 grid resolution. Built with MinGW, or via
-  Docker if you don't have MinGW installed. This C code is directly reusable on the STM32
-  firmware unmodified, by design - so the simulation logic itself never has to be debugged
-  on the microcontroller.
+- **[Windows Simulator](simulators/windows_desktop_simulator/)** is a C port of the same
+  physics core, rendered at the final 16x15 grid resolution. It builds with MinGW, or with
+  Docker if MinGW isn't installed. This C code was written to drop into the STM32 firmware
+  unmodified, so the simulation logic never has to be debugged directly on the
+  microcontroller.
 
 ## Prototyping
 
-Before any custom PCB was designed, the display and wiring techniques were proven out on
+Before any custom PCB was designed, the simulation was proven to run on real hardware using
 off-the-shelf dev boards.
 
 <p align="center">
@@ -73,9 +63,11 @@ off-the-shelf dev boards.
 - **NUCLEO-L432KC** used to prototype charlieplexing itself - notoriously fiddly wiring.
   A simple 3-pin, 6-LED charlieplex, scanned via DMA.
 
-## PCB
+## Axelor
 
-Board name: **Axelor**.
+Axelor is the custom PCB this project runs on: an STM32L431CC microcontroller drives the
+16x15 charlieplexed LED matrix, reads an onboard MPU-6500 accelerometer, and charges over
+USB-C.
 
 ### Schematic & Components
 
@@ -86,6 +78,8 @@ Board name: **Axelor**.
 
 Key components (full BOM [here](pcb/jlc_order/axelor_pcb-BOM.csv)):
 
+<div align="center">
+
 | Ref | Part | Role |
 |---|---|---|
 | U3 | STM32L431CCT6 | MCU - Cortex-M4, 256KB flash |
@@ -94,6 +88,8 @@ Key components (full BOM [here](pcb/jlc_order/axelor_pcb-BOM.csv)):
 | U1 | MCP73832T-2ACI/OT | Li-ion/Li-poly charge controller |
 | PWR_IN1 | USB Type-C receptacle | Power input |
 | D1-D240 | 0402 blue LEDs | 16x15 charlieplexed display |
+
+</div>
 
 ### PCB Design
 
@@ -162,6 +158,7 @@ More build, bring-up, and debugging photos [here](media/photos/).
 
 ## License
 
-No license has been chosen yet for this repository's own code/hardware design. Bundled
-ST CMSIS/HAL driver files under `stm_project/axelor/Drivers/` retain their own respective
-licenses (see the `LICENSE.txt` files in those folders).
+This project is licensed under the [MIT License](LICENSE) - free and open for anyone to
+use, modify, and distribute. Bundled ST CMSIS/HAL driver files under
+`stm_project/axelor/Drivers/` retain their own respective licenses (see the `LICENSE.txt`
+files in those folders).
